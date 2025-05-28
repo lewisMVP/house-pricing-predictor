@@ -651,12 +651,36 @@ with st.expander("Price Analysis by Zip Code"):
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write("Top 20 Zip Codes Analysis:")  # MODIFY: clarify it's top 20
+        st.write("Top 20 Zip Codes Analysis:")
         st.dataframe(price_analysis)
     
     with col2:
         st.write("Average Price by Zip Code:")
-        st.line_chart(price_analysis['Average Price'])
+        
+        # Use matplotlib for reliable chart display
+        plt, sns = load_plotting_libs()
+        
+        # Prepare data
+        chart_data = price_analysis.reset_index()
+        
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(range(len(chart_data)), chart_data['Average Price'], 
+                marker='o', linewidth=2, markersize=6, color='#1f77b4')
+        
+        # Customize chart
+        ax.set_xticks(range(len(chart_data)))
+        ax.set_xticklabels(chart_data['zipcode'], rotation=45)
+        ax.set_title("Average Price by Zip Code", fontsize=14, pad=20)
+        ax.set_xlabel("Zip Code")
+        ax.set_ylabel("Average Price (DKK)")
+        ax.grid(True, alpha=0.3)
+        
+        # Format y-axis to show prices nicely
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}'))
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
 
 # ---------- USER GUIDE -----------------------------------------------------
 st.markdown("""
