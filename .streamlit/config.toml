@@ -5,3 +5,9 @@ backgroundColor="#fafafa"
 secondaryBackgroundColor="#e3f6f5"
 textColor="#212529"
 font="sans serif"
+[server]
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false

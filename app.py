@@ -2,13 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib  # hoặc pickle
-import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.preprocessing import LabelEncoder
 
 # ---------- PAGE CONFIG & THEME ----------
 st.set_page_config(
-    page_title="House-Price Prediction",
+    page_title="🏠 House-Price Prediction",
     page_icon="🏠",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -236,15 +234,29 @@ st.markdown("""
 # ---------- HEADER ----------
 st.markdown('<div class="wizard-header"><h1>Enter Prediction Inputs</h1></div>', unsafe_allow_html=True)
 
-# --- Load Model & Data ---
+# ADD: Lazy load plotting libraries
+@st.cache_resource
+def load_plotting_libs():
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    return plt, sns
+
+# ADD: Optimize data loading
 @st.cache_resource
 def load_model():
-    model = joblib.load("xgb_model.joblib")  # model đã train
-    return model
+    return joblib.load("xgb_model.joblib")
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv("merged_output.csv")  # dữ liệu đã xử lý
+    df = pd.read_csv("merged_output.csv")
+    
+    # Quick data type optimization
+    for col in df.select_dtypes(include=[np.number]):
+        if df[col].dtype == 'int64':
+            df[col] = pd.to_numeric(df[col], downcast='integer')
+        elif df[col].dtype == 'float64':
+            df[col] = pd.to_numeric(df[col], downcast='float')
+    
     return df
 
 model = load_model()
@@ -437,6 +449,9 @@ with tab1:
         
         comparison_df = pd.DataFrame(comparison_data)
         
+        # ADD: Load plotting libs when needed
+        plt, sns = load_plotting_libs()
+        
         fig, ax = plt.subplots(figsize=(10, 5))
         bars = sns.barplot(x='Type', y='Price (DKK)', data=comparison_df, palette='viridis', ax=ax)
         
@@ -450,6 +465,7 @@ with tab1:
         plt.xticks(rotation=15)
         plt.tight_layout()
         st.pyplot(fig)
+        plt.close(fig)  # ADD: Free memory
 
 with tab2:
     st.write("### Detailed Analysis")
@@ -590,41 +606,52 @@ with tab2:
 st.subheader("Exploratory Data Analysis (EDA)")
 
 with st.expander("Correlation Heatmap"):
+    # ADD: Load plotting libs only when needed
+    plt, sns = load_plotting_libs()
+    
     corr = df.corr(numeric_only=True)
-
-    # Kiểm tra nếu có cột 'purchaseprice'
     if 'purchaseprice' in corr.columns:
-        # Lấy top 10 biến tương quan mạnh nhất với 'purchaseprice'
+        # OPTIMIZE: Limit to top 10 instead of all
         top_corr = corr['purchaseprice'].abs().sort_values(ascending=False)[1:11].index
         selected_corr = corr.loc[top_corr, top_corr]
     else:
-        # fallback: dùng toàn bộ nếu không có cột 'purchaseprice'
         selected_corr = corr
-
+    
     fig, ax = plt.subplots(figsize=(10, 8))
     sns.heatmap(selected_corr, annot=True, cmap="coolwarm", linewidths=0.5, square=True, fmt=".2f")
     ax.set_title("Heatmap of Correlated Variables")
     st.pyplot(fig)
+    plt.close(fig)  # ADD: Free memory
 
 with st.expander("Area Distribution"):
+    plt, sns = load_plotting_libs()  # ADD
     fig2, ax2 = plt.subplots()
-    sns.histplot(df['area'], bins=30, kde=True, ax=ax2)
+    # OPTIMIZE: Sample data if too large
+    if len(df) > 5000:
+        sample_data = df['area'].sample(5000, random_state=42)
+        sns.histplot(sample_data, bins=30, kde=True, ax=ax2)
+        ax2.set_title("Area Distribution (5000 samples)")
+    else:
+        sns.histplot(df['area'], bins=30, kde=True, ax=ax2)
+        ax2.set_title("Area Distribution")
     st.pyplot(fig2)
+    plt.close(fig2)  # ADD: Free memory
 
 with st.expander("Price Analysis by Zip Code"):
-    # Tính giá trung bình và số lượng giao dịch theo zipcode
-    price_analysis = df.groupby('zipcode').agg({
+    # OPTIMIZE: Limit to top 20 zip codes
+    top_zipcodes = df['zipcode'].value_counts().head(20).index
+    analysis_data = df[df['zipcode'].isin(top_zipcodes)]
+    
+    price_analysis = analysis_data.groupby('zipcode').agg({
         'purchaseprice': ['mean', 'count']
     }).round(2)
     
-    # Đặt tên cột
     price_analysis.columns = ['Average Price', 'Transaction Count']
     
-    # Hiển thị bảng và biểu đồ
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write("Zip-code Analysis Table:")
+        st.write("Top 20 Zip Codes Analysis:")  # MODIFY: clarify it's top 20
         st.dataframe(price_analysis)
     
     with col2:
