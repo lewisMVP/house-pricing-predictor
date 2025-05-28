@@ -8,7 +8,7 @@ from sklearn.preprocessing import LabelEncoder
 
 # ---------- PAGE CONFIG & THEME ----------
 st.set_page_config(
-    page_title="🏠 House-Price Prediction",
+    page_title="House-Price Prediction",
     page_icon="🏠",
     layout="wide",
     initial_sidebar_state="collapsed",
