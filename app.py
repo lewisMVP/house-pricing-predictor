@@ -1097,161 +1097,304 @@ with eval_tab:
 
 with tuning_tab:
     st.write("### Hyperparameter Tuning")
-    st.info("🔧 **Note**: Hyperparameter tuning is computationally intensive and may take several minutes to complete.")
+    st.warning("🎛️ **Performance Tuning** - Intelligently configured for optimal results")
     
-    # Tuning options
+    # Tuning options - CONSERVATIVE DEFAULTS
     col1, col2 = st.columns(2)
     
     with col1:
         tune_method = st.selectbox(
             "Tuning Method",
-            ["Grid Search", "Random Search", "Bayesian Optimization"],
-            help="Choose the hyperparameter optimization method"
+            ["Random Search", "Grid Search", "Bayesian Optimization"],
+            help="Random Search recommended for faster execution"
         )
         
-        cv_folds = st.slider("Cross-Validation Folds", 3, 10, 5)
+        cv_folds = st.slider("Cross-Validation Folds", 2, 5, 3)  # Reduced max
         
     with col2:
-        max_iterations = st.slider("Max Iterations", 10, 100, 20)
-        test_size = st.slider("Test Size", 0.1, 0.4, 0.2, 0.05)
+        max_iterations = st.slider("Max Iterations", 5, 15, 8)  # Reduced max
+        test_size = st.slider("Test Size", 0.1, 0.25, 0.15, 0.05)  # Reduced max
     
-    # Hyperparameters to tune
+    # ADD: Dataset size control
+    st.write("#### 🗂️ Dataset Configuration:")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        max_samples = st.slider("Max Training Samples", 1000, 15000, 8000, 1000)
+        st.caption("Reduce for faster tuning")
+        
+    with col2:
+        feature_reduction = st.checkbox("Use Essential Features Only", value=True)
+        st.caption("Recommended for performance")
+    
+    # Hyperparameters to tune - REDUCED RANGES
     st.write("#### XGBoost Hyperparameters to Tune:")
     
     param_col1, param_col2 = st.columns(2)
     
+    # ADD: Count selected parameters
+    selected_params = 0
+    
     with param_col1:
         tune_learning_rate = st.checkbox("Learning Rate", value=True)
+        if tune_learning_rate: selected_params += 1
+        
         tune_max_depth = st.checkbox("Max Depth", value=True)
-        tune_n_estimators = st.checkbox("N Estimators", value=True)
+        if tune_max_depth: selected_params += 1
+        
+        tune_n_estimators = st.checkbox("N Estimators", value=False)  # Default OFF
+        if tune_n_estimators: selected_params += 1
         
     with param_col2:
         tune_subsample = st.checkbox("Subsample", value=False)
+        if tune_subsample: selected_params += 1
+        
         tune_colsample = st.checkbox("Column Sample by Tree", value=False)
+        if tune_colsample: selected_params += 1
+        
         tune_reg_alpha = st.checkbox("Regularization Alpha", value=False)
+        if tune_reg_alpha: selected_params += 1
+    
+    # ADD: Safety warnings
+    st.write(f"**Selected parameters**: {selected_params}/6")
+    
+    if selected_params == 0:
+        st.error("❌ Please select at least one parameter to tune")
+        st.stop()
+    elif selected_params > 3:
+        st.warning("⚠️ Many parameters selected - this may take longer")
+    
+    # ADD: Estimate execution time
+    if tune_method == "Grid Search":
+        # Calculate combinations
+        combinations = 1
+        if tune_learning_rate: combinations *= 3
+        if tune_max_depth: combinations *= 3  
+        if tune_n_estimators: combinations *= 3
+        if tune_subsample: combinations *= 2
+        if tune_colsample: combinations *= 2
+        if tune_reg_alpha: combinations *= 3
+        
+        estimated_minutes = (combinations * cv_folds * max_samples / 1000) / 60
+        st.info(f"⏱️ **Estimated time**: ~{estimated_minutes:.1f} minutes ({combinations} combinations)")
+        
+        if combinations > 27:  # 3^3 = 27
+            st.error("❌ Too many combinations! Please reduce parameters or use Random Search")
+            st.stop()
+    else:
+        estimated_minutes = (max_iterations * cv_folds * max_samples / 1000) / 60
+        st.info(f"⏱️ **Estimated time**: ~{estimated_minutes:.1f} minutes ({max_iterations} iterations)")
     
     if st.button("🚀 Start Hyperparameter Tuning", type="primary"):
         
-        @st.cache_data
-        def perform_hyperparameter_tuning(method, cv_folds, max_iter, test_sz):
+        # REMOVE @st.cache_data to prevent memory buildup
+        def perform_hyperparameter_tuning(method, cv_folds, max_iter, test_sz, max_samples, use_essential_features):
             from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
             from sklearn.metrics import mean_squared_error, r2_score
             import xgboost as xgb
+            import gc  # Garbage collection
             
-            # Prepare data (same as evaluation)
-            eval_df = df.copy()
-            
-            # Data preprocessing
-            eval_df['date'] = pd.to_datetime(eval_df['date'], errors='coerce')
-            eval_df['date'] = eval_df['date'].dt.year * 12 + eval_df['date'].dt.month
-            eval_df['quarter'] = pd.to_datetime(eval_df['date'], errors='coerce').dt.quarter
-            eval_df = eval_df.fillna(0)
-            
-            # Encode categorical variables
-            le_house_type_tune = LabelEncoder()
-            le_sales_type_tune = LabelEncoder()
-            le_city_tune = LabelEncoder()
-            le_region_tune = LabelEncoder()
-            
-            eval_df['house_type'] = le_house_type_tune.fit_transform(eval_df['house_type'].astype(str))
-            eval_df['sales_type'] = le_sales_type_tune.fit_transform(eval_df['sales_type'].astype(str))
-            eval_df['city'] = le_city_tune.fit_transform(eval_df['city'].astype(str))
-            eval_df['region'] = le_region_tune.fit_transform(eval_df['region'].astype(str))
-            
-            # Features and target
-            feature_columns = [
-                'date', 'quarter', 'house_id', 'house_type', 'sales_type', 
-                'year_build', '%_change_between_offer_and_purchase', 'no_rooms', 
-                'sqm', 'sqm_price', 'address', 'zipcode', 'city', 'area', 'region',
-                'nom_interest_rate%', 'dk_ann_infl_rate%', 'yield_on_mortgage_credit_bonds%'
-            ]
-            
-            available_features = [col for col in feature_columns if col in eval_df.columns]
-            X = eval_df[available_features]
-            y = eval_df['purchaseprice']
-            
-            # Split data
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_sz, random_state=42)
-            
-            # Define parameter grid
-            param_grid = {}
-            
-            if tune_learning_rate:
-                param_grid['learning_rate'] = [0.01, 0.1, 0.2, 0.3]
-            if tune_max_depth:
-                param_grid['max_depth'] = [3, 4, 5, 6, 7]
-            if tune_n_estimators:
-                param_grid['n_estimators'] = [100, 200, 300, 500]
-            if tune_subsample:
-                param_grid['subsample'] = [0.8, 0.9, 1.0]
-            if tune_colsample:
-                param_grid['colsample_bytree'] = [0.8, 0.9, 1.0]
-            if tune_reg_alpha:
-                param_grid['reg_alpha'] = [0, 0.1, 0.5, 1.0]
-            
-            # Create XGBoost model
-            xgb_model = xgb.XGBRegressor(random_state=42, n_jobs=-1)
-            
-            # Perform tuning
-            if method == "Grid Search":
-                search = GridSearchCV(
-                    xgb_model, 
-                    param_grid, 
-                    cv=cv_folds, 
-                    scoring='neg_mean_squared_error', 
-                    n_jobs=-1,
-                    verbose=0
-                )
-            else:  # Random Search
-                search = RandomizedSearchCV(
-                    xgb_model, 
-                    param_grid, 
-                    cv=cv_folds, 
-                    scoring='neg_mean_squared_error', 
-                    n_iter=max_iter,
-                    n_jobs=-1,
-                    random_state=42,
-                    verbose=0
-                )
-            
-            # Fit the search
-            search.fit(X_train, y_train)
-            
-            # Get best model and predictions
-            best_model = search.best_estimator_
-            best_pred = best_model.predict(X_test)
-            
-            # Calculate metrics
-            best_rmse = np.sqrt(mean_squared_error(y_test, best_pred))
-            best_r2 = r2_score(y_test, best_pred)
-            
-            # Original model performance
-            original_pred = model.predict(X_test)
-            original_rmse = np.sqrt(mean_squared_error(y_test, original_pred))
-            original_r2 = r2_score(y_test, original_pred)
-            
-            results = {
-                'best_params': search.best_params_,
-                'best_score': -search.best_score_,
-                'best_rmse': best_rmse,
-                'best_r2': best_r2,
-                'original_rmse': original_rmse,
-                'original_r2': original_r2,
-                'improvement_rmse': ((original_rmse - best_rmse) / original_rmse) * 100,
-                'improvement_r2': ((best_r2 - original_r2) / original_r2) * 100,
-                'cv_results': search.cv_results_
-            }
-            
-            return results
-        
-        with st.spinner(f"Running {tune_method}... This may take a few minutes."):
             try:
-                tuning_results = perform_hyperparameter_tuning(
-                    tune_method, cv_folds, max_iterations, test_size
+                # STEP 1: Prepare optimized dataset
+                progress = st.progress(0.0)
+                status = st.empty()
+                
+                status.text("📊 Preparing dataset...")
+                
+                # Sample dataset if too large
+                if len(df) > max_samples:
+                    eval_df = df.sample(max_samples, random_state=42).copy()
+                    st.info(f"🔽 Sampled {max_samples:,} records from {len(df):,} total")
+                else:
+                    eval_df = df.copy()
+                
+                progress.progress(0.1)
+                
+                # STEP 2: Feature engineering - OPTIMIZED
+                status.text("🔧 Processing features...")
+                
+                # Convert datetime features efficiently
+                if 'date' in eval_df.columns:
+                    eval_df['date'] = pd.to_datetime(eval_df['date'], errors='coerce')
+                    eval_df['date'] = eval_df['date'].dt.year * 12 + eval_df['date'].dt.month
+                    eval_df['quarter'] = eval_df['date'] % 4 + 1  # Simplified quarter calculation
+                
+                # Fill missing values
+                eval_df = eval_df.fillna(0)
+                progress.progress(0.2)
+                
+                # STEP 3: Encode categorical variables - SIMPLIFIED
+                status.text("🏷️ Encoding categories...")
+                
+                le_house_type_tune = LabelEncoder()
+                le_sales_type_tune = LabelEncoder()
+                le_city_tune = LabelEncoder()
+                le_region_tune = LabelEncoder()
+                
+                if 'house_type' in eval_df.columns:
+                    eval_df['house_type'] = le_house_type_tune.fit_transform(eval_df['house_type'].astype(str))
+                if 'sales_type' in eval_df.columns:
+                    eval_df['sales_type'] = le_sales_type_tune.fit_transform(eval_df['sales_type'].astype(str))
+                if 'city' in eval_df.columns:
+                    eval_df['city'] = le_city_tune.fit_transform(eval_df['city'].astype(str))
+                if 'region' in eval_df.columns:
+                    eval_df['region'] = le_region_tune.fit_transform(eval_df['region'].astype(str))
+                
+                progress.progress(0.3)
+                
+                # STEP 4: Select features
+                status.text("📋 Selecting features...")
+                
+                if use_essential_features:
+                    # Essential features only
+                    feature_columns = [
+                        'house_type', 'sales_type', 'year_build', 'no_rooms', 
+                        'sqm', 'sqm_price', 'zipcode', 'city', 'region'
+                    ]
+                else:
+                    # Full feature set
+                    feature_columns = [
+                        'date', 'quarter', 'house_id', 'house_type', 'sales_type', 
+                        'year_build', '%_change_between_offer_and_purchase', 'no_rooms', 
+                        'sqm', 'sqm_price', 'address', 'zipcode', 'city', 'area', 'region',
+                        'nom_interest_rate%', 'dk_ann_infl_rate%', 'yield_on_mortgage_credit_bonds%'
+                    ]
+                
+                available_features = [col for col in feature_columns if col in eval_df.columns]
+                X = eval_df[available_features]
+                y = eval_df['purchaseprice']
+                
+                progress.progress(0.4)
+                
+                # STEP 5: Split data
+                status.text("✂️ Splitting data...")
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_sz, random_state=42)
+                
+                progress.progress(0.5)
+                
+                # STEP 6: Define parameter grid - REDUCED RANGES
+                status.text("⚙️ Setting up parameters...")
+                
+                param_grid = {}
+                
+                if tune_learning_rate:
+                    param_grid['learning_rate'] = [0.1, 0.2, 0.3]  # Reduced from 4 to 3
+                if tune_max_depth:
+                    param_grid['max_depth'] = [4, 5, 6]  # Reduced from 5 to 3
+                if tune_n_estimators:
+                    param_grid['n_estimators'] = [100, 200, 300]  # Reduced from 4 to 3
+                if tune_subsample:
+                    param_grid['subsample'] = [0.8, 1.0]  # Reduced from 3 to 2
+                if tune_colsample:
+                    param_grid['colsample_bytree'] = [0.8, 1.0]  # Reduced from 3 to 2
+                if tune_reg_alpha:
+                    param_grid['reg_alpha'] = [0, 0.1, 1.0]  # Reduced from 4 to 3
+                
+                progress.progress(0.6)
+                
+                # STEP 7: Create XGBoost model - CONSTRAINED
+                status.text("🤖 Creating model...")
+                
+                xgb_model = xgb.XGBRegressor(
+                    random_state=42, 
+                    n_jobs=1,  # Single thread to prevent memory overload
+                    tree_method='hist',  # Faster training
+                    max_depth=6,  # Default constraint
+                    n_estimators=200,  # Default constraint
+                    verbosity=0  # Reduce output
                 )
                 
+                progress.progress(0.7)
+                
+                # STEP 8: Perform tuning
+                status.text(f"🔍 Running {method}...")
+                
+                if method == "Grid Search":
+                    search = GridSearchCV(
+                        xgb_model, 
+                        param_grid, 
+                        cv=cv_folds, 
+                        scoring='neg_mean_squared_error', 
+                        n_jobs=1,  # Single thread
+                        verbose=0,
+                        error_score='raise'
+                    )
+                elif method == "Random Search":
+                    search = RandomizedSearchCV(
+                        xgb_model, 
+                        param_grid, 
+                        cv=cv_folds, 
+                        scoring='neg_mean_squared_error', 
+                        n_iter=max_iter,
+                        n_jobs=1,  # Single thread
+                        random_state=42,
+                        verbose=0,
+                        error_score='raise'
+                    )
+                else:  # Bayesian Optimization - SIMPLIFIED
+                    st.error("❌ Bayesian Optimization not implemented. Please use Grid Search or Random Search.")
+                    return None
+                
+                # Fit the search
+                search.fit(X_train, y_train)
+                progress.progress(0.9)
+                
+                # STEP 9: Get results
+                status.text("📊 Computing results...")
+                
+                best_model = search.best_estimator_
+                best_pred = best_model.predict(X_test)
+                
+                # Calculate metrics
+                best_rmse = np.sqrt(mean_squared_error(y_test, best_pred))
+                best_r2 = r2_score(y_test, best_pred)
+                
+                # Original model performance
+                original_pred = model.predict(X_test)
+                original_rmse = np.sqrt(mean_squared_error(y_test, original_pred))
+                original_r2 = r2_score(y_test, original_pred)
+                
+                progress.progress(1.0)
+                status.text("✅ Completed!")
+                
+                results = {
+                    'best_params': search.best_params_,
+                    'best_score': -search.best_score_,
+                    'best_rmse': best_rmse,
+                    'best_r2': best_r2,
+                    'original_rmse': original_rmse,
+                    'original_r2': original_r2,
+                    'improvement_rmse': ((original_rmse - best_rmse) / original_rmse) * 100,
+                    'improvement_r2': ((best_r2 - original_r2) / original_r2) * 100,
+                    'cv_results': search.cv_results_,
+                    'sample_size': len(eval_df),
+                    'features_used': len(available_features)
+                }
+                
+                # STEP 10: Cleanup memory
+                del eval_df, X_train, X_test, y_train, y_test, search, best_model
+                gc.collect()
+                
+                return results
+                
+            except Exception as e:
+                st.error(f"❌ **Tuning failed**: {str(e)}")
+                return None
+        
+        with st.spinner(f"Running {tune_method}... Please be patient (estimated: ~{estimated_minutes:.1f} min)"):
+            tuning_results = perform_hyperparameter_tuning(
+                tune_method, cv_folds, max_iterations, test_size, max_samples, feature_reduction
+            )
+            
+            if tuning_results is None:
+                st.error("❌ **Tuning failed!** Try reducing parameters or sample size.")
+                st.info("💡 **Suggestions**: Use fewer parameters, smaller dataset, or Random Search")
+            else:
                 # Display results
                 st.success("✅ Hyperparameter tuning completed!")
+                
+                # ADD: Configuration info
+                st.info(f"📊 **Configuration**: {tuning_results['sample_size']:,} samples, {tuning_results['features_used']} features")
                 
                 # Best parameters
                 st.write("### 🎯 Best Parameters Found:")
@@ -1297,31 +1440,56 @@ with tuning_tab:
                 # Interpretation
                 if tuning_results['improvement_rmse'] > 0:
                     st.success(f"🎉 **Improvement Found!** RMSE improved by {tuning_results['improvement_rmse']:.1f}%")
+                elif tuning_results['improvement_rmse'] > -2:
+                    st.info("ℹ️ **Marginal Change**: Performance is similar to current model")
                 else:
-                    st.info("ℹ️ **No Significant Improvement**: Current hyperparameters are already well-tuned.")
+                    st.warning("⚠️ **Performance Decreased**: Current model may already be well-tuned")
+                
+                # ADD: CV Results visualization
+                if len(tuning_results['cv_results']['mean_test_score']) > 1:
+                    st.write("### 📊 Cross-Validation Results:")
+                    
+                    scores = -np.array(tuning_results['cv_results']['mean_test_score'])  # Convert to positive RMSE
+                    
+                    plt, sns = load_plotting_libs()
+                    fig, ax = plt.subplots(figsize=(10, 4))
+                    
+                    ax.plot(range(len(scores)), scores, marker='o', linewidth=2)
+                    ax.set_title("RMSE Across Parameter Combinations")
+                    ax.set_xlabel("Parameter Combination")
+                    ax.set_ylabel("RMSE")
+                    ax.grid(True, alpha=0.3)
+                    
+                    # Highlight best score
+                    best_idx = np.argmin(scores)
+                    ax.scatter(best_idx, scores[best_idx], color='red', s=100, zorder=5, label='Best')
+                    ax.legend()
+                    
+                    st.pyplot(fig)
+                    plt.close(fig)
                 
                 # Download best parameters
                 if st.button("💾 Download Best Parameters as JSON"):
                     import json
-                    params_json = json.dumps(tuning_results['best_params'], indent=2)
+                    download_data = {
+                        'best_parameters': tuning_results['best_params'],
+                        'performance': {
+                            'best_rmse': tuning_results['best_rmse'],
+                            'best_r2': tuning_results['best_r2'],
+                            'improvement_rmse': tuning_results['improvement_rmse'],
+                            'improvement_r2': tuning_results['improvement_r2']
+                        },
+                        'configuration': {
+                            'method': tune_method,
+                            'cv_folds': cv_folds,
+                            'sample_size': tuning_results['sample_size'],
+                            'features_used': tuning_results['features_used']
+                        }
+                    }
+                    params_json = json.dumps(download_data, indent=2)
                     st.download_button(
-                        label="Download best_params.json",
+                        label="Download tuning_results.json",
                         data=params_json,
-                        file_name="best_hyperparameters.json",
+                        file_name="hyperparameter_tuning_results.json",
                         mime="application/json"
                     )
-                
-            except Exception as e:
-                st.error(f"Error during tuning: {str(e)}")
-                st.info("💡 Try reducing the number of parameters to tune or the number of iterations.")
-
-# ---------- USER GUIDE -----------------------------------------------------
-st.markdown("""
-### 📋 User Guide:
-1. **Enter the information** above to predict a house price  
-2. **See the predicted result** and detailed analysis  
-3. **Review** the charts and data below  
-4. **Compare** the prediction with the local market  
-
-*Note: Predictions are for reference only and depend on input data quality.*
-""")
