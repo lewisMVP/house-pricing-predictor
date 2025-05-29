@@ -307,7 +307,20 @@ with tab_taichinh:
     
     st.caption(f"💰 **Your Budget**: {price_range[0]:,} - {price_range[1]:,} DKK")
 
-# --- Dự đoán ---  
+# --- Mã hóa các cột chuỗi bằng LabelEncoder ---
+# Khởi tạo LabelEncoder
+le_house_type = LabelEncoder()
+le_sales_type = LabelEncoder()
+le_city = LabelEncoder()
+le_region = LabelEncoder()
+
+# Fit các LabelEncoder với dữ liệu từ `df` (hoặc dữ liệu tương tự mà bạn có)
+le_house_type.fit(df['house_type'])
+le_sales_type.fit(df['sales_type'])
+le_city.fit(df['city'])
+le_region.fit(df['region'])
+
+# Mã hóa các cột chuỗi trong input_data
 input_data = pd.DataFrame({
     # Convert datetime to numeric features
     'date': [pd.Timestamp.now().year * 12 + pd.Timestamp.now().month],  # Convert to months since epoch
@@ -345,38 +358,52 @@ input_data = pd.DataFrame({
     'yield_on_mortgage_credit_bonds%': 'float32'
 })
 
-# --- Mã hóa các cột chuỗi bằng LabelEncoder ---
-# Khởi tạo LabelEncoder
-le_house_type = LabelEncoder()
-le_sales_type = LabelEncoder()
-le_city = LabelEncoder()
-le_region = LabelEncoder()
-
-# Fit các LabelEncoder với dữ liệu từ `df` (hoặc dữ liệu tương tự mà bạn có)
-le_house_type.fit(df['house_type'])
-le_sales_type.fit(df['sales_type'])
-le_city.fit(df['city'])
-le_region.fit(df['region'])
-
+# --- GIẢI PHÁP ĐƠN GIẢN - KHÔNG DÙNG SESSION STATE ---
 # Mã hóa các cột chuỗi trong input_data
 input_data['house_type'] = le_house_type.transform(input_data['house_type'])
 input_data['sales_type'] = le_sales_type.transform(input_data['sales_type'])
 input_data['city'] = le_city.transform(input_data['city'])
 input_data['region'] = le_region.transform(input_data['region'])
 
-# --- Dự đoán giá nhà ---
-predicted_price = model.predict(input_data)[0]
+# --- TÍNH TOÁN PREDICTED_PRICE MỘT LẦN DUY NHẤT ---
+predicted_price = float(model.predict(input_data)[0])
+price_per_sqm = predicted_price / area
+
+# --- HIỂN THỊ KẾT QUẢ DỰ ĐOÁN CHÍNH ---
+st.markdown('<div class="result-box">', unsafe_allow_html=True)
+st.subheader("🏠 House Price Prediction")
+
+col1, col2, col3 = st.columns([2, 1, 1])
+
+with col1:
+    st.metric(
+        label="Predicted House Price",
+        value=f"{predicted_price:,.0f} DKK",
+        help="Machine learning prediction based on your inputs"
+    )
+
+with col2:
+    st.metric(
+        label="Price per m²",
+        value=f"{price_per_sqm:,.0f} DKK/m²"
+    )
+
+with col3:
+    if area > 0 and rooms > 0:
+        st.metric(
+            label="Prediction Quality",
+            value="Good" if 50 <= area <= 300 and 1 <= rooms <= 8 else "Fair"
+        )
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 # --- Thêm phần validation và gợi ý giá ---
 st.subheader("💡 Price Analysis & Suggestions")
 
-# ADD: Budget comparison at the top
 budget_min, budget_max = price_range
-predicted_price_formatted = f"{predicted_price:,.0f}"
-budget_range_formatted = f"{budget_min:,.0f} - {budget_max:,.0f}"
 
 if budget_min <= predicted_price <= budget_max:
-    st.success(f"✅ **Within Budget!** Predicted price ({predicted_price_formatted} DKK) fits your budget range ({budget_range_formatted} DKK)")
+    st.success(f"✅ **Within Budget!** Predicted price ({predicted_price:,.0f} DKK) fits your budget range ({budget_min:,.0f} - {budget_max:,.0f} DKK)")
 elif predicted_price < budget_min:
     diff = budget_min - predicted_price
     st.info(f"💰 **Below Budget!** Predicted price is {diff:,.0f} DKK below your minimum budget. You might find better options or save money!")
