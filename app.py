@@ -369,7 +369,6 @@ input_data['region'] = le_region.transform(input_data['region'])
 # TÍNH TOÁN PREDICTED_PRICE MỘT LẦN DUY NHẤT
 predicted_price = float(model.predict(input_data)[0])
 price_per_sqm = predicted_price / area
-
 st.markdown('<div class="result-box">', unsafe_allow_html=True)
 st.subheader("🏠 House Price Prediction")
 
@@ -1527,3 +1526,447 @@ with eval_tab:
                     st.warning("⚠️ **Medium Confidence**: Moderate uncertainty")
                 else:
                     st.error("❌ **Low Confidence**: High feature uncertainty")
+
+with tuning_tab:
+    st.write("### ⚙️ Hyperparameter Tuning & Model Optimization")
+    st.info("Experiment with different model parameters to potentially improve performance.")
+    
+    # Create columns for parameter controls
+    param_col1, param_col2, param_col3 = st.columns(3)
+    
+    with param_col1:
+        st.write("**🌳 Tree Parameters**")
+        n_estimators = st.slider("Number of Trees", 50, 500, 100, step=50, 
+                                help="More trees can improve accuracy but increase training time")
+        max_depth = st.slider("Max Depth", 3, 15, 6, 
+                             help="Maximum depth of each tree")
+        min_child_weight = st.slider("Min Child Weight", 1, 10, 1,
+                                   help="Minimum sum of instance weight needed in a child")
+    
+    with param_col2:
+        st.write("**📈 Learning Parameters**")
+        learning_rate = st.slider("Learning Rate", 0.01, 0.3, 0.1, step=0.01,
+                                help="Step size shrinkage to prevent overfitting")
+        subsample = st.slider("Subsample", 0.5, 1.0, 0.8, step=0.1,
+                            help="Fraction of samples used for fitting trees")
+        colsample_bytree = st.slider("Column Sample by Tree", 0.5, 1.0, 0.8, step=0.1,
+                                   help="Fraction of features used for each tree")
+    
+    with param_col3:
+        st.write("**🎯 Regularization**")
+        reg_alpha = st.slider("L1 Regularization (Alpha)", 0.0, 1.0, 0.0, step=0.1,
+                            help="L1 regularization term on weights")
+        reg_lambda = st.slider("L2 Regularization (Lambda)", 0.0, 2.0, 1.0, step=0.1,
+                             help="L2 regularization term on weights")
+        gamma = st.slider("Gamma (Min Split Loss)", 0.0, 5.0, 0.0, step=0.5,
+                        help="Minimum loss reduction required to make split")
+    
+    # Train and evaluate button
+    if st.button("🚀 Train Model with New Parameters", type="primary"):
+        
+        @st.cache_data
+        def train_and_evaluate_model(_params):
+            """Train new model with custom parameters and evaluate"""
+            try:
+                from sklearn.model_selection import train_test_split, cross_val_score
+                from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+                import xgboost as xgb
+                import numpy as np
+                import time
+                
+                # Prepare data (same as evaluation)
+                feature_columns = [
+                    'date', 'quarter', 'house_id', 'house_type', 'sales_type', 
+                    'year_build', '%_change_between_offer_and_purchase', 'no_rooms', 
+                    'sqm', 'sqm_price', 'address', 'zipcode', 'city', 'area', 'region',
+                    'nom_interest_rate%', 'dk_ann_infl_rate%', 'yield_on_mortgage_credit_bonds%'
+                ]
+                
+                if 'purchaseprice' not in df.columns:
+                    return None, "No target variable found"
+                
+                # Prepare features
+                tune_df = df.copy()
+                
+                # Convert datetime features
+                tune_df['date'] = pd.to_datetime(tune_df['date'], errors='coerce')
+                tune_df['date'] = tune_df['date'].dt.year * 12 + tune_df['date'].dt.month
+                tune_df['quarter'] = pd.to_datetime(tune_df['date'], errors='coerce').dt.quarter
+                
+                # Fill missing values
+                tune_df = tune_df.fillna(0)
+                
+                # Encode categorical variables
+                le_house_type_tune = LabelEncoder()
+                le_sales_type_tune = LabelEncoder()
+                le_city_tune = LabelEncoder()
+                le_region_tune = LabelEncoder()
+                
+                tune_df['house_type'] = le_house_type_tune.fit_transform(tune_df['house_type'].astype(str))
+                tune_df['sales_type'] = le_sales_type_tune.fit_transform(tune_df['sales_type'].astype(str))
+                tune_df['city'] = le_city_tune.fit_transform(tune_df['city'].astype(str))
+                tune_df['region'] = le_region_tune.fit_transform(tune_df['region'].astype(str))
+                
+                # Select features and target
+                available_features = [col for col in feature_columns if col in tune_df.columns]
+                X = tune_df[available_features]
+                y = tune_df['purchaseprice']
+                
+                # Split data
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+                
+                # Create new model with custom parameters
+                new_model = xgb.XGBRegressor(
+                    n_estimators=_params['n_estimators'],
+                    max_depth=_params['max_depth'],
+                    learning_rate=_params['learning_rate'],
+                    subsample=_params['subsample'],
+                    colsample_bytree=_params['colsample_bytree'],
+                    reg_alpha=_params['reg_alpha'],
+                    reg_lambda=_params['reg_lambda'],
+                    gamma=_params['gamma'],
+                    min_child_weight=_params['min_child_weight'],
+                    random_state=42,
+                    n_jobs=-1
+                )
+                
+                # Train model and measure time
+                start_time = time.time()
+                new_model.fit(X_train, y_train)
+                training_time = time.time() - start_time
+                
+                # Make predictions
+                y_pred_train = new_model.predict(X_train)
+                y_pred_test = new_model.predict(X_test)
+                
+                # Calculate metrics
+                train_mae = mean_absolute_error(y_train, y_pred_train)
+                test_mae = mean_absolute_error(y_test, y_pred_test)
+                train_rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
+                test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+                train_r2 = r2_score(y_train, y_pred_train)
+                test_r2 = r2_score(y_test, y_pred_test)
+                
+                # Cross-validation score
+                cv_scores = cross_val_score(new_model, X_train, y_train, cv=5, 
+                                          scoring='neg_root_mean_squared_error', n_jobs=-1)
+                cv_rmse = -cv_scores.mean()
+                cv_std = cv_scores.std()
+                
+                # Feature importance
+                feature_importance = pd.DataFrame({
+                    'Feature': available_features,
+                    'Importance': new_model.feature_importances_
+                }).sort_values('Importance', ascending=False)
+                
+                results = {
+                    'model': new_model,
+                    'training_time': training_time,
+                    'train_mae': train_mae,
+                    'test_mae': test_mae,
+                    'train_rmse': train_rmse,
+                    'test_rmse': test_rmse,
+                    'train_r2': train_r2,
+                    'test_r2': test_r2,
+                    'cv_rmse': cv_rmse,
+                    'cv_std': cv_std,
+                    'feature_importance': feature_importance,
+                    'y_test': y_test,
+                    'y_pred_test': y_pred_test,
+                    'params': _params
+                }
+                
+                return results, None
+                
+            except Exception as e:
+                return None, f"Training failed: {str(e)}"
+        
+        # Prepare parameters
+        new_params = {
+            'n_estimators': n_estimators,
+            'max_depth': max_depth,
+            'learning_rate': learning_rate,
+            'subsample': subsample,
+            'colsample_bytree': colsample_bytree,
+            'reg_alpha': reg_alpha,
+            'reg_lambda': reg_lambda,
+            'gamma': gamma,
+            'min_child_weight': min_child_weight
+        }
+        
+        # Train model
+        with st.spinner("Training model with new parameters... This may take a few minutes."):
+            results, error = train_and_evaluate_model(new_params)
+        
+        if error:
+            st.error(f"Training failed: {error}")
+        else:
+            st.success(f"✅ Model training completed in {results['training_time']:.1f} seconds!")
+            
+            # Display results comparison
+            st.write("### 📊 Model Comparison Results")
+            
+            # Create comparison with original model
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**🔴 Original Model**")
+                if 'metrics' in locals():
+                    st.metric("Test R²", f"{metrics['R²']:.4f}")
+                    st.metric("Test MAE", f"{metrics['MAE']:,.0f} DKK")
+                    st.metric("Test RMSE", f"{metrics['RMSE']:,.0f} DKK")
+                else:
+                    st.info("Run Model Evaluation first to compare")
+            
+            with col2:
+                st.write("**🟢 New Model**")
+                st.metric("Test R²", f"{results['test_r2']:.4f}", 
+                         delta=f"{results['test_r2'] - metrics['R²']:.4f}" if 'metrics' in locals() else None)
+                st.metric("Test MAE", f"{results['test_mae']:,.0f} DKK",
+                         delta=f"{results['test_mae'] - metrics['MAE']:,.0f}" if 'metrics' in locals() else None)
+                st.metric("Test RMSE", f"{results['test_rmse']:,.0f} DKK",
+                         delta=f"{results['test_rmse'] - metrics['RMSE']:,.0f}" if 'metrics' in locals() else None)
+            
+            # Performance analysis
+            st.write("### 📈 Performance Analysis")
+            
+            # Check for overfitting
+            train_test_gap = results['train_r2'] - results['test_r2']
+            if train_test_gap > 0.1:
+                st.warning(f"⚠️ **Potential Overfitting**: Training R² ({results['train_r2']:.3f}) is significantly higher than test R² ({results['test_r2']:.3f})")
+                st.write("**Suggestions to reduce overfitting:**")
+                st.write("- Increase regularization (alpha, lambda)")
+                st.write("- Reduce max_depth")
+                st.write("- Decrease learning_rate")
+                st.write("- Increase min_child_weight")
+            elif train_test_gap < 0.02:
+                st.success("✅ **Good Generalization**: Model performs consistently on training and test data")
+            else:
+                st.info("ℹ️ **Acceptable Performance**: Slight difference between training and test performance")
+            
+            # Cross-validation results
+            st.write("### 🔄 Cross-Validation Results")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("CV RMSE", f"{results['cv_rmse']:,.0f} DKK")
+            with col2:
+                st.metric("CV Std Dev", f"{results['cv_std']:,.0f} DKK")
+            with col3:
+                cv_coefficient = (results['cv_std'] / results['cv_rmse']) * 100
+                st.metric("CV Coefficient", f"{cv_coefficient:.1f}%")
+            
+            if cv_coefficient < 5:
+                st.success("✅ **Stable Model**: Low variation across folds")
+            elif cv_coefficient < 10:
+                st.info("ℹ️ **Moderately Stable**: Acceptable variation")
+            else:
+                st.warning("⚠️ **High Variation**: Consider data preprocessing or different parameters")
+            
+            # Feature importance comparison
+            st.write("### 🎯 Feature Importance (New Model)")
+            
+            plt, sns = load_plotting_libs()
+            
+            fig, ax = plt.subplots(figsize=(12, 8))
+            
+            top_15_features = results['feature_importance'].head(15)
+            bars = ax.barh(range(len(top_15_features)), top_15_features['Importance'], 
+                          color='lightcoral', alpha=0.8)
+            
+            ax.set_yticks(range(len(top_15_features)))
+            ax.set_yticklabels(top_15_features['Feature'])
+            ax.set_xlabel('Feature Importance')
+            ax.set_title('Top 15 Feature Importance (New Model)')
+            ax.grid(True, alpha=0.3)
+            
+            # Add value labels
+            for i, (bar, val) in enumerate(zip(bars, top_15_features['Importance'])):
+                ax.text(val + max(top_15_features['Importance']) * 0.01, 
+                       bar.get_y() + bar.get_height()/2, 
+                       f'{val:.3f}', ha='left', va='center', fontsize=9)
+            
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            # Prediction visualization
+            st.write("### 🎯 Prediction vs Actual (New Model)")
+            
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+            
+            # Scatter plot
+            sample_size = min(1000, len(results['y_test']))
+            indices = np.random.choice(len(results['y_test']), sample_size, replace=False)
+            
+            y_test_sample = results['y_test'].iloc[indices]
+            y_pred_sample = results['y_pred_test'][indices]
+            
+            ax1.scatter(y_test_sample, y_pred_sample, alpha=0.6, s=20, color='lightcoral')
+            
+            # Perfect prediction line
+            min_val = min(y_test_sample.min(), y_pred_sample.min())
+            max_val = max(y_test_sample.max(), y_pred_sample.max())
+            ax1.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Perfect Prediction')
+            
+            ax1.set_xlabel('Actual Price (DKK)')
+            ax1.set_ylabel('Predicted Price (DKK)')
+            ax1.set_title(f'New Model: Predicted vs Actual (R² = {results["test_r2"]:.3f})')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+            
+            # Residual plot
+            residuals = y_test_sample - y_pred_sample
+            ax2.scatter(y_pred_sample, residuals, alpha=0.6, s=20, color='lightcoral')
+            ax2.axhline(y=0, color='r', linestyle='--', lw=2)
+            ax2.set_xlabel('Predicted Price (DKK)')
+            ax2.set_ylabel('Residuals (Actual - Predicted)')
+            ax2.set_title('New Model: Residual Plot')
+            ax2.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            # Parameter recommendations
+            st.write("### 💡 Parameter Optimization Recommendations")
+            
+            recommendations = []
+            
+            # Performance-based recommendations
+            if results['test_r2'] < 0.7:
+                recommendations.append("🔹 **Low R²**: Try increasing n_estimators or adjusting learning_rate")
+            
+            if train_test_gap > 0.1:
+                recommendations.append("🔹 **Overfitting**: Increase reg_alpha/reg_lambda or reduce max_depth")
+            
+            if results['cv_std'] / results['cv_rmse'] > 0.1:
+                recommendations.append("🔹 **High Variation**: Consider increasing min_child_weight or gamma")
+            
+            if results['training_time'] > 60:
+                recommendations.append("🔹 **Slow Training**: Reduce n_estimators or increase learning_rate")
+            
+            # Parameter-specific recommendations
+            if learning_rate > 0.2:
+                recommendations.append("🔹 **High Learning Rate**: Consider reducing for better convergence")
+            
+            if max_depth > 10:
+                recommendations.append("🔹 **Deep Trees**: May cause overfitting, try reducing max_depth")
+            
+            if len(recommendations) > 0:
+                for rec in recommendations:
+                    st.write(rec)
+            else:
+                st.success("🎉 **Well-tuned parameters!** Your model configuration looks good.")
+            
+            # Option to save new model
+            st.write("### 💾 Save New Model")
+            
+            if st.button("Save This Model Configuration", help="Replace the current model with this new one"):
+                try:
+                    # Save new model
+                    joblib.dump(results['model'], "xgb_model_tuned.joblib")
+                    
+                    # Save parameters
+                    import json
+                    with open("model_params.json", "w") as f:
+                        json.dump(results['params'], f, indent=2)
+                    
+                    st.success("✅ **Model Saved!** New model saved as 'xgb_model_tuned.joblib'")
+                    st.info("**Next steps:**")
+                    st.write("1. Replace 'xgb_model.joblib' with 'xgb_model_tuned.joblib'")
+                    st.write("2. Restart the application to use the new model")
+                    st.write("3. Model parameters saved in 'model_params.json'")
+                    
+                except Exception as e:
+                    st.error(f"Failed to save model: {str(e)}")
+    
+    # Hyperparameter guidelines
+    st.write("### 📚 Hyperparameter Guidelines")
+    
+    with st.expander("📖 Understanding XGBoost Parameters"):
+        st.write("""
+        **🌳 Tree Structure Parameters:**
+        - **n_estimators**: Number of boosting rounds (trees). More trees can improve accuracy but may overfit.
+        - **max_depth**: Maximum tree depth. Controls complexity; deeper trees can overfit.
+        - **min_child_weight**: Minimum sum of instance weight in a child. Higher values prevent overfitting.
+        
+        **📈 Learning Parameters:**
+        - **learning_rate**: Step size shrinkage. Lower values need more trees but often perform better.
+        - **subsample**: Fraction of samples used for each tree. Prevents overfitting and speeds training.
+        - **colsample_bytree**: Fraction of features used for each tree. Adds randomness and prevents overfitting.
+        
+        **🎯 Regularization Parameters:**
+        - **reg_alpha (L1)**: L1 regularization on weights. Increases sparsity in feature selection.
+        - **reg_lambda (L2)**: L2 regularization on weights. Smooths the final learnt weights.
+        - **gamma**: Minimum loss reduction to make a split. Higher values make the algorithm conservative.
+        
+        **🎨 General Tips:**
+        - Start with default parameters and tune one at a time
+        - Use cross-validation to evaluate changes
+        - Balance between underfitting and overfitting
+        - Consider training time vs. performance trade-offs
+        """)
+    
+    with st.expander("🎯 Common Parameter Combinations"):
+        st.write("""
+        **🚀 For Better Accuracy:**
+        ```
+        n_estimators: 200-500
+        learning_rate: 0.05-0.1
+        max_depth: 6-10
+        subsample: 0.8-0.9
+        colsample_bytree: 0.8-0.9
+        ```
+        
+        **⚡ For Faster Training:**
+        ```
+        n_estimators: 100-200
+        learning_rate: 0.1-0.2
+        max_depth: 4-6
+        subsample: 0.8
+        colsample_bytree: 0.8
+        ```
+        
+        **🛡️ For Preventing Overfitting:**
+        ```
+        reg_alpha: 0.1-1.0
+        reg_lambda: 1.0-2.0
+        gamma: 0.5-2.0
+        min_child_weight: 3-10
+        max_depth: 3-6
+        ```
+        
+        **🎯 For Small Datasets (<10k samples):**
+        ```
+        n_estimators: 100-300
+        learning_rate: 0.05-0.1
+        max_depth: 4-6
+        min_child_weight: 5-10
+        ```
+        """)
+    
+    # Auto-tuning suggestion
+    st.write("### 🤖 Automated Hyperparameter Tuning")
+    st.info("""
+    **💡 Future Enhancement Ideas:**
+    - **Grid Search**: Systematic search over parameter combinations
+    - **Random Search**: Random sampling of parameter space
+    - **Bayesian Optimization**: Smart parameter search using previous results
+    - **Optuna Integration**: Advanced hyperparameter optimization framework
+    - **AutoML**: Fully automated model selection and tuning
+    
+    For now, use the manual tuning above to explore different parameter combinations!
+    """)
+
+# Add at the very end of the file:
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align: center;">
+        <p>© 2025 - House Price Prediction App | Machine Learning Project</p>
+        <p style="font-size: 0.8rem; color: #666;">Version: 2.0 with SHAP Explainability & Hyperparameter Tuning</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
