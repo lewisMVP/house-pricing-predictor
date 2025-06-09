@@ -370,10 +370,6 @@ input_data['region'] = le_region.transform(input_data['region'])
 predicted_price = float(model.predict(input_data)[0])
 price_per_sqm = predicted_price / area
 
-# DEBUG: Hiển thị giá trị để kiểm tra
-st.write(f"🔍 **DEBUG**: predicted_price = {predicted_price:,.0f} DKK")
-
-# --- HIỂN THỊ KẾT QUẢ DỰ ĐOÁN CHÍNH ---
 st.markdown('<div class="result-box">', unsafe_allow_html=True)
 st.subheader("🏠 House Price Prediction")
 
@@ -447,14 +443,10 @@ with st.expander("🔍 Why this price? (Quick Explanation)"):
     else:
         st.error(f"Could not generate explanation: {base_value}")
 
-# --- Thêm phần validation và gợi ý giá ---
+# --- Price analysis and suggestions ---
 st.subheader("💡 Price Analysis & Suggestions")
 
 budget_min, budget_max = price_range
-
-# DEBUG: Kiểm tra budget và predicted_price
-st.write(f"🔍 **DEBUG**: budget_min = {budget_min:,.0f}, budget_max = {budget_max:,.0f}")
-st.write(f"🔍 **DEBUG**: predicted_price trong analysis = {predicted_price:,.0f}")
 
 if budget_min <= predicted_price <= budget_max:
     st.success(f"✅ **Within Budget!** Predicted price ({predicted_price:,.0f} DKK) fits your budget range ({budget_min:,.0f} - {budget_max:,.0f} DKK)")
@@ -999,10 +991,10 @@ with st.expander("🏷️ Price Range Market Analysis"):
         
         if nearby_low > 0:
             nearby_count_low = len(df[df['purchaseprice'] < analysis_price_range[0]])
-            st.write(f"- **Lower range** ({nearby_low:,} - {analysis_price_range[0]:,}): {nearby_count_low} houses")
+            st.write(f"- **Lower range** ({nearby_low:,} - {analysis_price_range[0]:,.0f}): {nearby_count_low} houses")
             
         nearby_count_high = len(df[df['purchaseprice'] > analysis_price_range[1]])
-        st.write(f"- **Higher range** ({analysis_price_range[1]:,} - {nearby_high:,}): {nearby_count_high} houses")
+        st.write(f"- **Higher range** ({analysis_price_range[1]:,.0f} - {nearby_high:,}): {nearby_count_high} houses")
 
 # ---------- MODEL EVALUATION & TUNING ----------
 # MOVE: Di chuyển phần này XUỐNG sau EDA
