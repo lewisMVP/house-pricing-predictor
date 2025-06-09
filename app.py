@@ -1296,7 +1296,7 @@ with eval_tab:
                 ax.set_yticklabels(top_features['Feature'])
                 ax.set_xlabel('SHAP Impact on Price (DKK)')
                 ax.set_title('Feature Impact on Your Prediction')
-                ax.axvline(x=0, color='black', linestyle='-', alpha=0.3)
+                ax.axvline(x=0, color='black', linestyle='-', alpha=0.5)
                 ax.grid(True, alpha=0.3)
                 
                 # Add value labels on bars
@@ -1370,162 +1370,257 @@ with eval_tab:
                 display_importance['Mean |SHAP Value|'] = display_importance['Mean |SHAP Value|'].apply(lambda x: f"{x:,.0f}")
                 st.dataframe(display_importance, use_container_width=True)
                 
-                # Insights
-                top_3_features = importance_df.head(3)['Feature'].tolist()
-                st.info(f"🔍 **Key Insight**: The three most important features globally are: **{', '.join(top_3_features)}**")
+        # Insights
+        top_3_features = importance_df.head(3)['Feature'].tolist()
+        st.info(f"🔍 **Key Insight**: The three most important features globally are: **{', '.join(top_3_features)}**")
+        
+    # Tab 3: SHAP Summary Plot
+    with shap_tab3:
+        st.write("#### SHAP Summary Plot")
+        st.write("Shows the distribution of SHAP values for each feature. Each dot represents one prediction.")
+        
+        try:
+            plt, sns = load_plotting_libs()
             
-            # Tab 3: SHAP Summary Plot
-            with shap_tab3:
-                st.write("#### SHAP Summary Plot")
-                st.write("Shows the distribution of SHAP values for each feature. Each dot represents one prediction.")
+            # Method 1: Try SHAP's built-in summary plot
+            fig = plt.figure(figsize=(12, 10))
+            
+            shap.summary_plot(
+                shap_data['shap_values'], 
+                shap_data['X_sample'], 
+                feature_names=shap_data['feature_names'],
+                max_display=15,
+                show=False,
+                plot_type="dot"
+            )
+            
+            st.pyplot(fig)
+            plt.close(fig)
+            
+        except Exception as e:
+            st.warning(f"SHAP built-in plot failed: {str(e)}")
+            st.write("**Using alternative visualization:**")
+            
+            try:
+                # Method 2: Manual SHAP-style plot
+                plt, sns = load_plotting_libs()
                 
-                try:
-                    # Create SHAP summary plot
-                    plt, sns = load_plotting_libs()
+                # Calculate feature importance
+                feature_importance = np.abs(shap_data['shap_values']).mean(axis=0)
+                
+                # Get top 15 features
+                top_indices = np.argsort(feature_importance)[-15:]
+                
+                fig, ax = plt.subplots(figsize=(12, 10))
+                
+                # Plot each feature
+                for i, idx in enumerate(top_indices):
+                    feature_name = shap_data['feature_names'][idx]
+                    shap_vals = shap_data['shap_values'][:, idx]
+                    feature_vals = shap_data['X_sample'].iloc[:, idx]
                     
-                    fig, ax = plt.subplots(figsize=(12, 10))
+                    # Normalize feature values for color mapping (0 to 1)
+                    if feature_vals.std() > 0:
+                        feature_vals_norm = (feature_vals - feature_vals.min()) / (feature_vals.max() - feature_vals.min())
+                    else:
+                        feature_vals_norm = np.zeros_like(feature_vals)
                     
-                    # Use SHAP's built-in summary plot
-                    shap.summary_plot(
-                        shap_data['shap_values'], 
-                        shap_data['X_sample'], 
-                        feature_names=shap_data['feature_names'],
-                        max_display=15,
-                        show=False
+                    # Create scatter plot for this feature
+                    scatter = ax.scatter(
+                        shap_vals, 
+                        [i] * len(shap_vals), 
+                        c=feature_vals_norm, 
+                        cmap='coolwarm', 
+                        alpha=0.6, 
+                        s=16,
+                        vmin=0,
+                        vmax=1
                     )
-                    
-                    st.pyplot(fig)
-                    plt.close(fig)
-                    
-                    st.write("""
-                    **How to read this plot:**
-                    - Each row represents a feature
-                    - Each dot represents one house prediction
-                    - Color indicates feature value (red = high, blue = low)
-                    - X-axis shows SHAP impact on price
-                    - Features are sorted by importance
-                    """)
-                    
-                except Exception as e:
-                    st.error(f"Could not generate SHAP summary plot: {str(e)}")
-                    st.info("Try using a smaller dataset or different visualization.")
-            
-            # Tab 4: Dependence Plot
-            with shap_tab4:
-                st.write("#### SHAP Dependence Plot")
-                st.write("Shows how a feature's value affects the prediction, and interactions with other features.")
                 
-                # Let user select feature for dependence plot
-                important_features = importance_df.head(10)['Feature'].tolist()
-                selected_feature = st.selectbox(
-                    "Select feature for dependence analysis:",
-                    important_features,
-                    help="Choose a feature to see how its value affects predictions"
+                # Customize plot
+                ax.set_yticks(range(len(top_indices)))
+                ax.set_yticklabels([shap_data['feature_names'][idx] for idx in top_indices])
+                ax.set_xlabel('SHAP value (impact on model output)')
+                ax.set_title('SHAP Summary Plot - Feature Impact Distribution')
+                ax.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
+                ax.grid(True, alpha=0.3)
+                
+                # Add colorbar
+                cbar = plt.colorbar(scatter, ax=ax)
+                cbar.set_label('Feature value\n(red = high, blue = low)', rotation=270, labelpad=20)
+                
+                # Invert y-axis to match SHAP convention (most important at top)
+                ax.invert_yaxis()
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+                
+            except Exception as e2:
+                st.error(f"Alternative plot also failed: {str(e2)}")
+                
+                # Method 3: Simple bar chart fallback
+                st.write("**Simplified Feature Impact Chart:**")
+                
+                plt, sns = load_plotting_libs()
+                
+                # Calculate feature importance
+                feature_importance = np.abs(shap_data['shap_values']).mean(axis=0)
+                importance_df = pd.DataFrame({
+                    'Feature': shap_data['feature_names'],
+                    'Mean |SHAP Value|': feature_importance
+                }).sort_values('Mean |SHAP Value|', ascending=False).head(15)
+                
+                fig, ax = plt.subplots(figsize=(10, 8))
+                
+                colors = plt.cm.viridis(np.linspace(0, 1, len(importance_df)))
+                bars = ax.barh(range(len(importance_df)), importance_df['Mean |SHAP Value|'], 
+                              color=colors, alpha=0.8)
+                
+                ax.set_yticks(range(len(importance_df)))
+                ax.set_yticklabels(importance_df['Feature'])
+                ax.set_xlabel('Mean Absolute SHAP Value')
+                ax.set_title('Feature Importance (Simplified SHAP Summary)')
+                ax.grid(True, alpha=0.3, axis='x')
+                
+                # Add value labels
+                for i, (bar, val) in enumerate(zip(bars, importance_df['Mean |SHAP Value|'])):
+                    ax.text(val + max(importance_df['Mean |SHAP Value|']) * 0.01, 
+                           bar.get_y() + bar.get_height()/2, 
+                           f'{val:.0f}', ha='left', va='center', fontsize=9)
+                
+                # Invert y-axis to show most important at top
+                ax.invert_yaxis()
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+        
+        st.write("""
+        **How to read this plot:**
+        - Each row represents a feature
+        - Each dot represents one house prediction  
+        - Color indicates feature value (red = high, blue = low)
+        - X-axis shows SHAP impact on price
+        - Features are sorted by importance (most important at top)
+        """)
+    
+    # Tab 4: Dependence Plot
+    with shap_tab4:
+        st.write("#### SHAP Dependence Plot")
+        st.write("Shows how a feature's value affects the prediction, and interactions with other features.")
+        
+        # Let user select feature for dependence plot
+        important_features = importance_df.head(10)['Feature'].tolist()
+        selected_feature = st.selectbox(
+            "Select feature for dependence analysis:",
+            important_features,
+            help="Choose a feature to see how its value affects predictions"
+        )
+        
+        if selected_feature in shap_data['feature_names']:
+            feature_idx = shap_data['feature_names'].index(selected_feature)
+            
+            try:
+                plt, sns = load_plotting_libs()
+                
+                fig, ax = plt.subplots(figsize=(12, 8))
+                
+                # Create dependence plot
+                shap.dependence_plot(
+                    feature_idx,
+                    shap_data['shap_values'],
+                    shap_data['X_sample'],
+                    feature_names=shap_data['feature_names'],
+                    show=False,
+                    ax=ax
                 )
                 
-                if selected_feature in shap_data['feature_names']:
-                    feature_idx = shap_data['feature_names'].index(selected_feature)
-                    
-                    try:
-                        plt, sns = load_plotting_libs()
-                        
-                        fig, ax = plt.subplots(figsize=(12, 8))
-                        
-                        # Create dependence plot
-                        shap.dependence_plot(
-                            feature_idx,
-                            shap_data['shap_values'],
-                            shap_data['X_sample'],
-                            feature_names=shap_data['feature_names'],
-                            show=False,
-                            ax=ax
-                        )
-                        
-                        ax.set_title(f'SHAP Dependence Plot: {selected_feature}')
-                        
-                        st.pyplot(fig)
-                        plt.close(fig)
-                        
-                        # Show current prediction point
-                        current_feature_value = shap_data['current_input'][selected_feature].iloc[0]
-                        current_shap_value = current_shap[feature_idx]
-                        
-                        st.info(f"""
-                        **Your house's {selected_feature}**: {current_feature_value}  
-                        **SHAP impact**: {current_shap_value:+,.0f} DKK
-                        """)
-                        
-                        st.write(f"""
-                        **How to read this plot:**
-                        - X-axis: {selected_feature} values
-                        - Y-axis: SHAP impact on price prediction
-                        - Each dot: one house in the dataset
-                        - Color: interaction effect with another feature
-                        - Your house value is shown above
-                        """)
-                        
-                    except Exception as e:
-                        st.error(f"Could not generate dependence plot: {str(e)}")
-                        
-                        # Fallback: simple scatter plot
-                        st.write("Showing simplified relationship:")
-                        
-                        plt, sns = load_plotting_libs()
-                        fig, ax = plt.subplots(figsize=(10, 6))
-                        
-                        x_values = shap_data['X_sample'].iloc[:, feature_idx]
-                        y_values = shap_data['shap_values'][:, feature_idx]
-                        
-                        ax.scatter(x_values, y_values, alpha=0.6, color='blue')
-                        ax.scatter(current_feature_value, current_shap_value, 
-                                 color='red', s=100, marker='*', label='Your House')
-                        
-                        ax.set_xlabel(f'{selected_feature} Value')
-                        ax.set_ylabel('SHAP Impact on Price')
-                        ax.set_title(f'Feature Impact: {selected_feature}')
-                        ax.legend()
-                        ax.grid(True, alpha=0.3)
-                        
-                        st.pyplot(fig)
-                        plt.close(fig)
-            
-            # Additional SHAP insights
-            st.write("### 💡 SHAP Insights Summary")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**For Your Prediction:**")
-                positive_impact = current_shap[current_shap > 0].sum()
-                negative_impact = current_shap[current_shap < 0].sum()
+                ax.set_title(f'SHAP Dependence Plot: {selected_feature}')
                 
-                st.metric("Positive Contributions", f"+{positive_impact:,.0f} DKK")
-                st.metric("Negative Contributions", f"{negative_impact:,.0f} DKK")
-                st.metric("Net Effect", f"{positive_impact + negative_impact:+,.0f} DKK")
-            
-            with col2:
-                st.write("**Most Influential Features:**")
-                top_positive = explanation_df[explanation_df['SHAP Impact'] > 0].head(1)
-                top_negative = explanation_df[explanation_df['SHAP Impact'] < 0].head(1)
+                st.pyplot(fig)
+                plt.close(fig)
                 
-                if not top_positive.empty:
-                    feature = top_positive.iloc[0]
-                    st.success(f"🔺 **{feature['Feature']}**: +{feature['SHAP Impact']:,.0f} DKK")
+                # Show current prediction point
+                current_feature_value = shap_data['current_input'][selected_feature].iloc[0]
+                current_shap_value = current_shap[feature_idx]
                 
-                if not top_negative.empty:
-                    feature = top_negative.iloc[0]
-                    st.error(f"🔻 **{feature['Feature']}**: {feature['SHAP Impact']:,.0f} DKK")
+                st.info(f"""
+                **Your house's {selected_feature}**: {current_feature_value}  
+                **SHAP impact**: {current_shap_value:+,.0f} DKK
+                """)
                 
-                # Overall prediction confidence
-                total_magnitude = np.abs(current_shap).sum()
-                relative_uncertainty = total_magnitude / predicted_price * 100
+                st.write(f"""
+                **How to read this plot:**
+                - X-axis: {selected_feature} values
+                - Y-axis: SHAP impact on price prediction
+                - Each dot: one house in the dataset
+                - Color: interaction effect with another feature
+                - Your house value is shown above
+                """)
                 
-                if relative_uncertainty < 10:
-                    st.info("🎯 **High Confidence**: Low feature uncertainty")
-                elif relative_uncertainty < 20:
-                    st.warning("⚠️ **Medium Confidence**: Moderate uncertainty")
-                else:
-                    st.error("❌ **Low Confidence**: High feature uncertainty")
+            except Exception as e:
+                st.error(f"Could not generate dependence plot: {str(e)}")
+                
+                # Fallback: simple scatter plot
+                st.write("Showing simplified relationship:")
+                
+                plt, sns = load_plotting_libs()
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                x_values = shap_data['X_sample'].iloc[:, feature_idx]
+                y_values = shap_data['shap_values'][:, feature_idx]
+                
+                ax.scatter(x_values, y_values, alpha=0.6, color='blue')
+                ax.scatter(current_feature_value, current_shap_value, 
+                         color='red', s=100, marker='*', label='Your House')
+                
+                ax.set_xlabel(f'{selected_feature} Value')
+                ax.set_ylabel('SHAP Impact on Price')
+                ax.set_title(f'Feature Impact: {selected_feature}')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                
+                st.pyplot(fig)
+                plt.close(fig)
+    
+     # Additional SHAP insights
+    st.write("### 💡 SHAP Insights Summary")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**For Your Prediction:**")
+        positive_impact = current_shap[current_shap > 0].sum()
+        negative_impact = current_shap[current_shap < 0].sum()
+        
+        st.metric("Positive Contributions", f"+{positive_impact:,.0f} DKK")
+        st.metric("Negative Contributions", f"{negative_impact:,.0f} DKK")
+        st.metric("Net Effect", f"{positive_impact + negative_impact:+,.0f} DKK")
+    
+    with col2:
+        st.write("**Most Influential Features:**")
+        top_positive = explanation_df[explanation_df['SHAP Impact'] > 0].head(1)
+        top_negative = explanation_df[explanation_df['SHAP Impact'] < 0].head(1)
+        
+        if not top_positive.empty:
+            feature = top_positive.iloc[0]
+            st.success(f"🔺 **{feature['Feature']}**: +{feature['SHAP Impact']:,.0f} DKK")
+        
+        if not top_negative.empty:
+            feature = top_negative.iloc[0]
+            st.error(f"🔻 **{feature['Feature']}**: {feature['SHAP Impact']:,.0f} DKK")
+        
+        # Overall prediction confidence
+        total_magnitude = np.abs(current_shap).sum()
+        relative_uncertainty = total_magnitude / predicted_price * 100
+        
+        if relative_uncertainty < 10:
+            st.info("🎯 **High Confidence**: Low feature uncertainty")
+        elif relative_uncertainty < 20:
+            st.warning("⚠️ **Medium Confidence**: Moderate uncertainty")
+        else:
+            st.error("❌ **Low Confidence**: High feature uncertainty")
 
 with tuning_tab:
     st.write("### ⚙️ Hyperparameter Tuning & Model Optimization")
