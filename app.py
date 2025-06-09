@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib  # hoặc pickle
+import joblib
 from sklearn.preprocessing import LabelEncoder
+import shap 
 
 # ---------- PAGE CONFIG & THEME ----------
 st.set_page_config(
@@ -365,9 +366,12 @@ input_data['sales_type'] = le_sales_type.transform(input_data['sales_type'])
 input_data['city'] = le_city.transform(input_data['city'])
 input_data['region'] = le_region.transform(input_data['region'])
 
-# --- TÍNH TOÁN PREDICTED_PRICE MỘT LẦN DUY NHẤT ---
+# TÍNH TOÁN PREDICTED_PRICE MỘT LẦN DUY NHẤT
 predicted_price = float(model.predict(input_data)[0])
 price_per_sqm = predicted_price / area
+
+# DEBUG: Hiển thị giá trị để kiểm tra
+st.write(f"🔍 **DEBUG**: predicted_price = {predicted_price:,.0f} DKK")
 
 # --- HIỂN THỊ KẾT QUẢ DỰ ĐOÁN CHÍNH ---
 st.markdown('<div class="result-box">', unsafe_allow_html=True)
@@ -397,10 +401,60 @@ with col3:
 
 st.markdown('</div>', unsafe_allow_html=True)
 
+# THÊM: Quick SHAP explanation
+with st.expander("🔍 Why this price? (Quick Explanation)"):
+    @st.cache_data
+    def get_quick_shap_explanation():
+        try:
+            # Create explainer for current prediction
+            explainer = shap.TreeExplainer(model)
+            
+            # Get SHAP values for current input
+            shap_values = explainer.shap_values(input_data)
+            
+            # Get feature names
+            feature_names = input_data.columns.tolist()
+            
+            # Create quick explanation
+            explanation_data = []
+            for i, (feature, shap_val) in enumerate(zip(feature_names, shap_values[0])):
+                if abs(shap_val) > 1000:  # Only show significant impacts
+                    explanation_data.append({
+                        'Feature': feature,
+                        'Impact': shap_val,
+                        'Direction': 'Increases Price' if shap_val > 0 else 'Decreases Price'
+                    })
+            
+            # Sort by absolute impact
+            explanation_data.sort(key=lambda x: abs(x['Impact']), reverse=True)
+            
+            return explanation_data[:5], explainer.expected_value  # Top 5 features
+            
+        except Exception as e:
+            return None, f"Error: {str(e)}"
+    
+    quick_explanation, base_value = get_quick_shap_explanation()
+    
+    if quick_explanation:
+        st.write(f"**Base price (market average)**: {base_value:,.0f} DKK")
+        st.write("**Key factors affecting your prediction**:")
+        
+        for item in quick_explanation:
+            impact_color = "🟢" if item['Impact'] > 0 else "🔴"
+            st.write(f"{impact_color} **{item['Feature']}**: {item['Impact']:+,.0f} DKK ({item['Direction']})")
+        
+        st.caption("💡 See 'Model Evaluation' section for detailed SHAP analysis")
+    else:
+        st.error(f"Could not generate explanation: {base_value}")
+
 # --- Thêm phần validation và gợi ý giá ---
 st.subheader("💡 Price Analysis & Suggestions")
 
 budget_min, budget_max = price_range
+
+# DEBUG: Kiểm tra budget và predicted_price
+st.write(f"🔍 **DEBUG**: budget_min = {budget_min:,.0f}, budget_max = {budget_max:,.0f}")
+st.write(f"🔍 **DEBUG**: predicted_price trong analysis = {predicted_price:,.0f}")
 
 if budget_min <= predicted_price <= budget_max:
     st.success(f"✅ **Within Budget!** Predicted price ({predicted_price:,.0f} DKK) fits your budget range ({budget_min:,.0f} - {budget_max:,.0f} DKK)")
@@ -1122,401 +1176,362 @@ with eval_tab:
         st.pyplot(fig)
         plt.close(fig)
 
-with tuning_tab:
-    st.write("### Hyperparameter Tuning")
-    st.warning("🎛️ **Performance Tuning** - Intelligently configured for optimal results")
-    
-    # Tuning options - CONSERVATIVE DEFAULTS
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        tune_method = st.selectbox(
-            "Tuning Method",
-            ["Random Search", "Grid Search", "Bayesian Optimization"],
-            help="Random Search recommended for faster execution"
-        )
+        # ========== THÊM PHẦN SHAP ANALYSIS ==========
+        st.write("### 🔍 SHAP Model Explainability")
+        st.info("SHAP (SHapley Additive exPlanations) helps understand which features most influence the model's predictions.")
         
-        cv_folds = st.slider("Cross-Validation Folds", 2, 5, 3)  # Reduced max
+        # Create tabs for different SHAP visualizations
+        shap_tab1, shap_tab2, shap_tab3, shap_tab4 = st.tabs([
+            "🎯 Current Prediction", 
+            "📊 Feature Importance", 
+            "🌊 Summary Plot", 
+            "🔬 Dependence Plot"
+        ])
         
-    with col2:
-        max_iterations = st.slider("Max Iterations", 5, 15, 8)  # Reduced max
-        test_size = st.slider("Test Size", 0.1, 0.25, 0.15, 0.05)  # Reduced max
-    
-    # ADD: Dataset size control
-    st.write("#### 🗂️ Dataset Configuration:")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        max_samples = st.slider("Max Training Samples", 1000, 15000, 8000, 1000)
-        st.caption("Reduce for faster tuning")
-        
-    with col2:
-        feature_reduction = st.checkbox("Use Essential Features Only", value=True)
-        st.caption("Recommended for performance")
-    
-    # Hyperparameters to tune - REDUCED RANGES
-    st.write("#### XGBoost Hyperparameters to Tune:")
-    
-    param_col1, param_col2 = st.columns(2)
-    
-    # ADD: Count selected parameters
-    selected_params = 0
-    
-    with param_col1:
-        tune_learning_rate = st.checkbox("Learning Rate", value=True)
-        if tune_learning_rate: selected_params += 1
-        
-        tune_max_depth = st.checkbox("Max Depth", value=True)
-        if tune_max_depth: selected_params += 1
-        
-        tune_n_estimators = st.checkbox("N Estimators", value=False)  # Default OFF
-        if tune_n_estimators: selected_params += 1
-        
-    with param_col2:
-        tune_subsample = st.checkbox("Subsample", value=False)
-        if tune_subsample: selected_params += 1
-        
-        tune_colsample = st.checkbox("Column Sample by Tree", value=False)
-        if tune_colsample: selected_params += 1
-        
-        tune_reg_alpha = st.checkbox("Regularization Alpha", value=False)
-        if tune_reg_alpha: selected_params += 1
-    
-    # ADD: Safety warnings
-    st.write(f"**Selected parameters**: {selected_params}/6")
-    
-    if selected_params == 0:
-        st.error("❌ Please select at least one parameter to tune")
-        st.stop()
-    elif selected_params > 3:
-        st.warning("⚠️ Many parameters selected - this may take longer")
-    
-    # ADD: Estimate execution time
-    if tune_method == "Grid Search":
-        # Calculate combinations
-        combinations = 1
-        if tune_learning_rate: combinations *= 3
-        if tune_max_depth: combinations *= 3  
-        if tune_n_estimators: combinations *= 3
-        if tune_subsample: combinations *= 2
-        if tune_colsample: combinations *= 2
-        if tune_reg_alpha: combinations *= 3
-        
-        estimated_minutes = (combinations * cv_folds * max_samples / 1000) / 60
-        st.info(f"⏱️ **Estimated time**: ~{estimated_minutes:.1f} minutes ({combinations} combinations)")
-        
-        if combinations > 27:  # 3^3 = 27
-            st.error("❌ Too many combinations! Please reduce parameters or use Random Search")
-            st.stop()
-    else:
-        estimated_minutes = (max_iterations * cv_folds * max_samples / 1000) / 60
-        st.info(f"⏱️ **Estimated time**: ~{estimated_minutes:.1f} minutes ({max_iterations} iterations)")
-    
-    if st.button("🚀 Start Hyperparameter Tuning", type="primary"):
-        
-        # REMOVE @st.cache_data to prevent memory buildup
-        def perform_hyperparameter_tuning(method, cv_folds, max_iter, test_sz, max_samples, use_essential_features):
-            from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
-            from sklearn.metrics import mean_squared_error, r2_score
-            import xgboost as xgb
-            import gc  # Garbage collection
-            
+        @st.cache_data
+        def calculate_shap_values():
+            """Calculate SHAP values for model interpretation"""
             try:
-                # STEP 1: Prepare optimized dataset
-                progress = st.progress(0.0)
-                status = st.empty()
+                # Prepare data for SHAP (same as evaluation)
+                feature_columns = [
+                    'date', 'quarter', 'house_id', 'house_type', 'sales_type', 
+                    'year_build', '%_change_between_offer_and_purchase', 'no_rooms', 
+                    'sqm', 'sqm_price', 'address', 'zipcode', 'city', 'area', 'region',
+                    'nom_interest_rate%', 'dk_ann_infl_rate%', 'yield_on_mortgage_credit_bonds%'
+                ]
                 
-                status.text("📊 Preparing dataset...")
+                eval_df = df.copy()
                 
-                # Sample dataset if too large
-                if len(df) > max_samples:
-                    eval_df = df.sample(max_samples, random_state=42).copy()
-                    st.info(f"🔽 Sampled {max_samples:,} records from {len(df):,} total")
-                else:
-                    eval_df = df.copy()
-                
-                progress.progress(0.1)
-                
-                # STEP 2: Feature engineering - OPTIMIZED
-                status.text("🔧 Processing features...")
-                
-                # Convert datetime features efficiently
-                if 'date' in eval_df.columns:
-                    eval_df['date'] = pd.to_datetime(eval_df['date'], errors='coerce')
-                    eval_df['date'] = eval_df['date'].dt.year * 12 + eval_df['date'].dt.month
-                    eval_df['quarter'] = eval_df['date'] % 4 + 1  # Simplified quarter calculation
+                # Convert datetime features
+                eval_df['date'] = pd.to_datetime(eval_df['date'], errors='coerce')
+                eval_df['date'] = eval_df['date'].dt.year * 12 + eval_df['date'].dt.month
+                eval_df['quarter'] = eval_df['date'] % 4 + 1
                 
                 # Fill missing values
                 eval_df = eval_df.fillna(0)
-                progress.progress(0.2)
                 
-                # STEP 3: Encode categorical variables - SIMPLIFIED
-                status.text("🏷️ Encoding categories...")
+                # Encode categorical variables
+                le_house_type_shap = LabelEncoder()
+                le_sales_type_shap = LabelEncoder()
+                le_city_shap = LabelEncoder()
+                le_region_shap = LabelEncoder()
                 
-                le_house_type_tune = LabelEncoder()
-                le_sales_type_tune = LabelEncoder()
-                le_city_tune = LabelEncoder()
-                le_region_tune = LabelEncoder()
+                eval_df['house_type'] = le_house_type_shap.fit_transform(eval_df['house_type'].astype(str))
+                eval_df['sales_type'] = le_sales_type_shap.fit_transform(eval_df['sales_type'].astype(str))
+                eval_df['city'] = le_city_shap.fit_transform(eval_df['city'].astype(str))
+                eval_df['region'] = le_region_shap.fit_transform(eval_df['region'].astype(str))
                 
-                if 'house_type' in eval_df.columns:
-                    eval_df['house_type'] = le_house_type_tune.fit_transform(eval_df['house_type'].astype(str))
-                if 'sales_type' in eval_df.columns:
-                    eval_df['sales_type'] = le_sales_type_tune.fit_transform(eval_df['sales_type'].astype(str))
-                if 'city' in eval_df.columns:
-                    eval_df['city'] = le_city_tune.fit_transform(eval_df['city'].astype(str))
-                if 'region' in eval_df.columns:
-                    eval_df['region'] = le_region_tune.fit_transform(eval_df['region'].astype(str))
-                
-                progress.progress(0.3)
-                
-                # STEP 4: Select features
-                status.text("📋 Selecting features...")
-                
-                if use_essential_features:
-                    # Essential features only
-                    feature_columns = [
-                        'house_type', 'sales_type', 'year_build', 'no_rooms', 
-                        'sqm', 'sqm_price', 'zipcode', 'city', 'region'
-                    ]
-                else:
-                    # Full feature set
-                    feature_columns = [
-                        'date', 'quarter', 'house_id', 'house_type', 'sales_type', 
-                        'year_build', '%_change_between_offer_and_purchase', 'no_rooms', 
-                        'sqm', 'sqm_price', 'address', 'zipcode', 'city', 'area', 'region',
-                        'nom_interest_rate%', 'dk_ann_infl_rate%', 'yield_on_mortgage_credit_bonds%'
-                    ]
-                
+                # Select features
                 available_features = [col for col in feature_columns if col in eval_df.columns]
-                X = eval_df[available_features]
-                y = eval_df['purchaseprice']
+                X_shap = eval_df[available_features]
                 
-                progress.progress(0.4)
+                # Sample data for performance (SHAP can be slow on large datasets)
+                if len(X_shap) > 1000:
+                    X_sample = X_shap.sample(1000, random_state=42)
+                else:
+                    X_sample = X_shap
                 
-                # STEP 5: Split data
-                status.text("✂️ Splitting data...")
-                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_sz, random_state=42)
+                # Create SHAP explainer
+                explainer = shap.TreeExplainer(model)
                 
-                progress.progress(0.5)
+                # Calculate SHAP values for sample
+                shap_values = explainer.shap_values(X_sample)
                 
-                # STEP 6: Define parameter grid - REDUCED RANGES
-                status.text("⚙️ Setting up parameters...")
+                # Get current prediction SHAP values
+                current_shap_values = explainer.shap_values(input_data[available_features])
                 
-                param_grid = {}
-                
-                if tune_learning_rate:
-                    param_grid['learning_rate'] = [0.1, 0.2, 0.3]  # Reduced from 4 to 3
-                if tune_max_depth:
-                    param_grid['max_depth'] = [4, 5, 6]  # Reduced from 5 to 3
-                if tune_n_estimators:
-                    param_grid['n_estimators'] = [100, 200, 300]  # Reduced from 4 to 3
-                if tune_subsample:
-                    param_grid['subsample'] = [0.8, 1.0]  # Reduced from 3 to 2
-                if tune_colsample:
-                    param_grid['colsample_bytree'] = [0.8, 1.0]  # Reduced from 3 to 2
-                if tune_reg_alpha:
-                    param_grid['reg_alpha'] = [0, 0.1, 1.0]  # Reduced from 4 to 3
-                
-                progress.progress(0.6)
-                
-                # STEP 7: Create XGBoost model - CONSTRAINED
-                status.text("🤖 Creating model...")
-                
-                xgb_model = xgb.XGBRegressor(
-                    random_state=42, 
-                    n_jobs=1,  # Single thread to prevent memory overload
-                    tree_method='hist',  # Faster training
-                    max_depth=6,  # Default constraint
-                    n_estimators=200,  # Default constraint
-                    verbosity=0  # Reduce output
-                )
-                
-                progress.progress(0.7)
-                
-                # STEP 8: Perform tuning
-                status.text(f"🔍 Running {method}...")
-                
-                if method == "Grid Search":
-                    search = GridSearchCV(
-                        xgb_model, 
-                        param_grid, 
-                        cv=cv_folds, 
-                        scoring='neg_mean_squared_error', 
-                        n_jobs=1,  # Single thread
-                        verbose=0,
-                        error_score='raise'
-                    )
-                elif method == "Random Search":
-                    search = RandomizedSearchCV(
-                        xgb_model, 
-                        param_grid, 
-                        cv=cv_folds, 
-                        scoring='neg_mean_squared_error', 
-                        n_iter=max_iter,
-                        n_jobs=1,  # Single thread
-                        random_state=42,
-                        verbose=0,
-                        error_score='raise'
-                    )
-                else:  # Bayesian Optimization - SIMPLIFIED
-                    st.error("❌ Bayesian Optimization not implemented. Please use Grid Search or Random Search.")
-                    return None
-                
-                # Fit the search
-                search.fit(X_train, y_train)
-                progress.progress(0.9)
-                
-                # STEP 9: Get results
-                status.text("📊 Computing results...")
-                
-                best_model = search.best_estimator_
-                best_pred = best_model.predict(X_test)
-                
-                # Calculate metrics
-                best_rmse = np.sqrt(mean_squared_error(y_test, best_pred))
-                best_r2 = r2_score(y_test, best_pred)
-                
-                # Original model performance
-                original_pred = model.predict(X_test)
-                original_rmse = np.sqrt(mean_squared_error(y_test, original_pred))
-                original_r2 = r2_score(y_test, original_pred)
-                
-                progress.progress(1.0)
-                status.text("✅ Completed!")
-                
-                results = {
-                    'best_params': search.best_params_,
-                    'best_score': -search.best_score_,
-                    'best_rmse': best_rmse,
-                    'best_r2': best_r2,
-                    'original_rmse': original_rmse,
-                    'original_r2': original_r2,
-                    'improvement_rmse': ((original_rmse - best_rmse) / original_rmse) * 100,
-                    'improvement_r2': ((best_r2 - original_r2) / original_r2) * 100,
-                    'cv_results': search.cv_results_,
-                    'sample_size': len(eval_df),
-                    'features_used': len(available_features)
+                return {
+                    'explainer': explainer,
+                    'shap_values': shap_values,
+                    'X_sample': X_sample,
+                    'current_shap': current_shap_values,
+                    'current_input': input_data[available_features],
+                    'feature_names': available_features,
+                    'base_value': explainer.expected_value
                 }
                 
-                # STEP 10: Cleanup memory
-                del eval_df, X_train, X_test, y_train, y_test, search, best_model
-                gc.collect()
-                
-                return results
-                
             except Exception as e:
-                st.error(f"❌ **Tuning failed**: {str(e)}")
-                return None
+                return {'error': f"SHAP calculation failed: {str(e)}"}
         
-        with st.spinner(f"Running {tune_method}... Please be patient (estimated: ~{estimated_minutes:.1f} min)"):
-            tuning_results = perform_hyperparameter_tuning(
-                tune_method, cv_folds, max_iterations, test_size, max_samples, feature_reduction
-            )
+        # Calculate SHAP values
+        with st.spinner("Calculating SHAP values... This may take a moment."):
+            shap_data = calculate_shap_values()
+        
+        if 'error' in shap_data:
+            st.error(shap_data['error'])
+            st.info("💡 SHAP analysis requires the model to be compatible and properly configured.")
+        else:
             
-            if tuning_results is None:
-                st.error("❌ **Tuning failed!** Try reducing parameters or sample size.")
-                st.info("💡 **Suggestions**: Use fewer parameters, smaller dataset, or Random Search")
-            else:
-                # Display results
-                st.success("✅ Hyperparameter tuning completed!")
+            # Tab 1: Current Prediction Explanation
+            with shap_tab1:
+                st.write("#### Explanation for Your Current Prediction")
+                st.write(f"**Predicted Price**: {predicted_price:,.0f} DKK")
+                st.write(f"**Base Value (Average)**: {shap_data['base_value']:,.0f} DKK")
                 
-                # ADD: Configuration info
-                st.info(f"📊 **Configuration**: {tuning_results['sample_size']:,} samples, {tuning_results['features_used']} features")
+                # Current prediction SHAP values
+                current_shap = shap_data['current_shap'][0]
+                feature_names = shap_data['feature_names']
                 
-                # Best parameters
-                st.write("### 🎯 Best Parameters Found:")
-                best_params_df = pd.DataFrame(list(tuning_results['best_params'].items()), 
-                                            columns=['Parameter', 'Best Value'])
-                st.table(best_params_df)
+                # Create explanation dataframe
+                explanation_data = []
+                for i, (feature, shap_val) in enumerate(zip(feature_names, current_shap)):
+                    feature_value = shap_data['current_input'].iloc[0, i]
+                    explanation_data.append({
+                        'Feature': feature,
+                        'Value': feature_value,
+                        'SHAP Impact': shap_val,
+                        'Impact (DKK)': shap_val,
+                        'Contribution': 'Increases Price' if shap_val > 0 else 'Decreases Price'
+                    })
                 
-                # Performance comparison
-                st.write("### 📈 Performance Comparison:")
+                explanation_df = pd.DataFrame(explanation_data)
+                explanation_df = explanation_df.reindex(
+                    explanation_df['SHAP Impact'].abs().sort_values(ascending=False).index
+                )
                 
-                col1, col2, col3, col4 = st.columns(4)
+                # Display top contributing features
+                st.write("**Top 10 Most Influential Features:**")
+                top_features = explanation_df.head(10)
                 
-                with col1:
-                    st.metric(
-                        "Original RMSE",
-                        f"{tuning_results['original_rmse']:,.0f}",
-                        help="RMSE of current model"
-                    )
+                # Create a horizontal bar chart for SHAP values
+                plt, sns = load_plotting_libs()
                 
-                with col2:
-                    st.metric(
-                        "Best RMSE",
-                        f"{tuning_results['best_rmse']:,.0f}",
-                        delta=f"{tuning_results['improvement_rmse']:+.1f}%",
-                        help="RMSE after hyperparameter tuning"
-                    )
+                fig, ax = plt.subplots(figsize=(12, 8))
                 
-                with col3:
-                    st.metric(
-                        "Original R²",
-                        f"{tuning_results['original_r2']:.3f}",
-                        help="R² of current model"
-                    )
+                colors = ['green' if x > 0 else 'red' for x in top_features['SHAP Impact']]
+                bars = ax.barh(range(len(top_features)), top_features['SHAP Impact'], color=colors, alpha=0.7)
                 
-                with col4:
-                    st.metric(
-                        "Best R²",
-                        f"{tuning_results['best_r2']:.3f}",
-                        delta=f"{tuning_results['improvement_r2']:+.1f}%",
-                        help="R² after hyperparameter tuning"
-                    )
+                ax.set_yticks(range(len(top_features)))
+                ax.set_yticklabels(top_features['Feature'])
+                ax.set_xlabel('SHAP Impact on Price (DKK)')
+                ax.set_title('Feature Impact on Your Prediction')
+                ax.axvline(x=0, color='black', linestyle='-', alpha=0.3)
+                ax.grid(True, alpha=0.3)
                 
-                # Interpretation
-                if tuning_results['improvement_rmse'] > 0:
-                    st.success(f"🎉 **Improvement Found!** RMSE improved by {tuning_results['improvement_rmse']:.1f}%")
-                elif tuning_results['improvement_rmse'] > -2:
-                    st.info("ℹ️ **Marginal Change**: Performance is similar to current model")
+                # Add value labels on bars
+                for i, (bar, val) in enumerate(zip(bars, top_features['SHAP Impact'])):
+                    ax.text(val + (max(top_features['SHAP Impact']) * 0.01), bar.get_y() + bar.get_height()/2, 
+                           f'{val:,.0f}', ha='left' if val > 0 else 'right', va='center', fontsize=9)
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+                
+                # Display detailed table
+                st.write("**Detailed Feature Contributions:**")
+                display_df = top_features[['Feature', 'Value', 'Impact (DKK)', 'Contribution']].copy()
+                display_df['Impact (DKK)'] = display_df['Impact (DKK)'].apply(lambda x: f"{x:+,.0f}")
+                st.dataframe(display_df, use_container_width=True)
+                
+                # Calculation verification
+                total_shap = current_shap.sum()
+                calculated_prediction = shap_data['base_value'] + total_shap
+                st.write("**Verification:**")
+                st.write(f"Base Value: {shap_data['base_value']:,.0f} DKK")
+                st.write(f"+ Total Feature Contributions: {total_shap:+,.0f} DKK")
+                st.write(f"= Calculated Prediction: {calculated_prediction:,.0f} DKK")
+                st.write(f"Model Prediction: {predicted_price:,.0f} DKK")
+                
+                if abs(calculated_prediction - predicted_price) < 1:
+                    st.success("✅ SHAP explanation matches model prediction perfectly!")
                 else:
-                    st.warning("⚠️ **Performance Decreased**: Current model may already be well-tuned")
+                    st.info(f"ℹ️ Small difference ({abs(calculated_prediction - predicted_price):,.0f} DKK) due to rounding.")
+            
+            # Tab 2: Global Feature Importance
+            with shap_tab2:
+                st.write("#### Global Feature Importance")
+                st.write("Shows the average impact of each feature across all predictions in the dataset.")
                 
-                # ADD: CV Results visualization
-                if len(tuning_results['cv_results']['mean_test_score']) > 1:
-                    st.write("### 📊 Cross-Validation Results:")
-                    
-                    scores = -np.array(tuning_results['cv_results']['mean_test_score'])  # Convert to positive RMSE
-                    
+                # Calculate mean absolute SHAP values for feature importance
+                feature_importance = np.abs(shap_data['shap_values']).mean(axis=0)
+                importance_df = pd.DataFrame({
+                    'Feature': shap_data['feature_names'],
+                    'Mean |SHAP Value|': feature_importance
+                }).sort_values('Mean |SHAP Value|', ascending=False)
+                
+                # Plot feature importance
+                plt, sns = load_plotting_libs()
+                
+                fig, ax = plt.subplots(figsize=(12, 8))
+                
+                top_15 = importance_df.head(15)
+                bars = ax.barh(range(len(top_15)), top_15['Mean |SHAP Value|'], color='skyblue', alpha=0.8)
+                
+                ax.set_yticks(range(len(top_15)))
+                ax.set_yticklabels(top_15['Feature'])
+                ax.set_xlabel('Mean |SHAP Value| (Average Feature Impact)')
+                ax.set_title('Global Feature Importance (Top 15 Features)')
+                ax.grid(True, alpha=0.3)
+                
+                # Add value labels
+                for i, (bar, val) in enumerate(zip(bars, top_15['Mean |SHAP Value|'])):
+                    ax.text(val + max(top_15['Mean |SHAP Value|']) * 0.01, 
+                           bar.get_y() + bar.get_height()/2, 
+                           f'{val:.0f}', ha='left', va='center', fontsize=9)
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+                
+                # Display importance table
+                st.write("**Feature Importance Rankings:**")
+                display_importance = importance_df.copy()
+                display_importance['Mean |SHAP Value|'] = display_importance['Mean |SHAP Value|'].apply(lambda x: f"{x:,.0f}")
+                st.dataframe(display_importance, use_container_width=True)
+                
+                # Insights
+                top_3_features = importance_df.head(3)['Feature'].tolist()
+                st.info(f"🔍 **Key Insight**: The three most important features globally are: **{', '.join(top_3_features)}**")
+            
+            # Tab 3: SHAP Summary Plot
+            with shap_tab3:
+                st.write("#### SHAP Summary Plot")
+                st.write("Shows the distribution of SHAP values for each feature. Each dot represents one prediction.")
+                
+                try:
+                    # Create SHAP summary plot
                     plt, sns = load_plotting_libs()
-                    fig, ax = plt.subplots(figsize=(10, 4))
                     
-                    ax.plot(range(len(scores)), scores, marker='o', linewidth=2)
-                    ax.set_title("RMSE Across Parameter Combinations")
-                    ax.set_xlabel("Parameter Combination")
-                    ax.set_ylabel("RMSE")
-                    ax.grid(True, alpha=0.3)
+                    fig, ax = plt.subplots(figsize=(12, 10))
                     
-                    # Highlight best score
-                    best_idx = np.argmin(scores)
-                    ax.scatter(best_idx, scores[best_idx], color='red', s=100, zorder=5, label='Best')
-                    ax.legend()
+                    # Use SHAP's built-in summary plot
+                    shap.summary_plot(
+                        shap_data['shap_values'], 
+                        shap_data['X_sample'], 
+                        feature_names=shap_data['feature_names'],
+                        max_display=15,
+                        show=False
+                    )
                     
                     st.pyplot(fig)
                     plt.close(fig)
+                    
+                    st.write("""
+                    **How to read this plot:**
+                    - Each row represents a feature
+                    - Each dot represents one house prediction
+                    - Color indicates feature value (red = high, blue = low)
+                    - X-axis shows SHAP impact on price
+                    - Features are sorted by importance
+                    """)
+                    
+                except Exception as e:
+                    st.error(f"Could not generate SHAP summary plot: {str(e)}")
+                    st.info("Try using a smaller dataset or different visualization.")
+            
+            # Tab 4: Dependence Plot
+            with shap_tab4:
+                st.write("#### SHAP Dependence Plot")
+                st.write("Shows how a feature's value affects the prediction, and interactions with other features.")
                 
-                # Download best parameters
-                if st.button("💾 Download Best Parameters as JSON"):
-                    import json
-                    download_data = {
-                        'best_parameters': tuning_results['best_params'],
-                        'performance': {
-                            'best_rmse': tuning_results['best_rmse'],
-                            'best_r2': tuning_results['best_r2'],
-                            'improvement_rmse': tuning_results['improvement_rmse'],
-                            'improvement_r2': tuning_results['improvement_r2']
-                        },
-                        'configuration': {
-                            'method': tune_method,
-                            'cv_folds': cv_folds,
-                            'sample_size': tuning_results['sample_size'],
-                            'features_used': tuning_results['features_used']
-                        }
-                    }
-                    params_json = json.dumps(download_data, indent=2)
-                    st.download_button(
-                        label="Download tuning_results.json",
-                        data=params_json,
-                        file_name="hyperparameter_tuning_results.json",
-                        mime="application/json"
-                    )
+                # Let user select feature for dependence plot
+                important_features = importance_df.head(10)['Feature'].tolist()
+                selected_feature = st.selectbox(
+                    "Select feature for dependence analysis:",
+                    important_features,
+                    help="Choose a feature to see how its value affects predictions"
+                )
+                
+                if selected_feature in shap_data['feature_names']:
+                    feature_idx = shap_data['feature_names'].index(selected_feature)
+                    
+                    try:
+                        plt, sns = load_plotting_libs()
+                        
+                        fig, ax = plt.subplots(figsize=(12, 8))
+                        
+                        # Create dependence plot
+                        shap.dependence_plot(
+                            feature_idx,
+                            shap_data['shap_values'],
+                            shap_data['X_sample'],
+                            feature_names=shap_data['feature_names'],
+                            show=False,
+                            ax=ax
+                        )
+                        
+                        ax.set_title(f'SHAP Dependence Plot: {selected_feature}')
+                        
+                        st.pyplot(fig)
+                        plt.close(fig)
+                        
+                        # Show current prediction point
+                        current_feature_value = shap_data['current_input'][selected_feature].iloc[0]
+                        current_shap_value = current_shap[feature_idx]
+                        
+                        st.info(f"""
+                        **Your house's {selected_feature}**: {current_feature_value}  
+                        **SHAP impact**: {current_shap_value:+,.0f} DKK
+                        """)
+                        
+                        st.write(f"""
+                        **How to read this plot:**
+                        - X-axis: {selected_feature} values
+                        - Y-axis: SHAP impact on price prediction
+                        - Each dot: one house in the dataset
+                        - Color: interaction effect with another feature
+                        - Your house value is shown above
+                        """)
+                        
+                    except Exception as e:
+                        st.error(f"Could not generate dependence plot: {str(e)}")
+                        
+                        # Fallback: simple scatter plot
+                        st.write("Showing simplified relationship:")
+                        
+                        plt, sns = load_plotting_libs()
+                        fig, ax = plt.subplots(figsize=(10, 6))
+                        
+                        x_values = shap_data['X_sample'].iloc[:, feature_idx]
+                        y_values = shap_data['shap_values'][:, feature_idx]
+                        
+                        ax.scatter(x_values, y_values, alpha=0.6, color='blue')
+                        ax.scatter(current_feature_value, current_shap_value, 
+                                 color='red', s=100, marker='*', label='Your House')
+                        
+                        ax.set_xlabel(f'{selected_feature} Value')
+                        ax.set_ylabel('SHAP Impact on Price')
+                        ax.set_title(f'Feature Impact: {selected_feature}')
+                        ax.legend()
+                        ax.grid(True, alpha=0.3)
+                        
+                        st.pyplot(fig)
+                        plt.close(fig)
+            
+            # Additional SHAP insights
+            st.write("### 💡 SHAP Insights Summary")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**For Your Prediction:**")
+                positive_impact = current_shap[current_shap > 0].sum()
+                negative_impact = current_shap[current_shap < 0].sum()
+                
+                st.metric("Positive Contributions", f"+{positive_impact:,.0f} DKK")
+                st.metric("Negative Contributions", f"{negative_impact:,.0f} DKK")
+                st.metric("Net Effect", f"{positive_impact + negative_impact:+,.0f} DKK")
+            
+            with col2:
+                st.write("**Most Influential Features:**")
+                top_positive = explanation_df[explanation_df['SHAP Impact'] > 0].head(1)
+                top_negative = explanation_df[explanation_df['SHAP Impact'] < 0].head(1)
+                
+                if not top_positive.empty:
+                    feature = top_positive.iloc[0]
+                    st.success(f"🔺 **{feature['Feature']}**: +{feature['SHAP Impact']:,.0f} DKK")
+                
+                if not top_negative.empty:
+                    feature = top_negative.iloc[0]
+                    st.error(f"🔻 **{feature['Feature']}**: {feature['SHAP Impact']:,.0f} DKK")
+                
+                # Overall prediction confidence
+                total_magnitude = np.abs(current_shap).sum()
+                relative_uncertainty = total_magnitude / predicted_price * 100
+                
+                if relative_uncertainty < 10:
+                    st.info("🎯 **High Confidence**: Low feature uncertainty")
+                elif relative_uncertainty < 20:
+                    st.warning("⚠️ **Medium Confidence**: Moderate uncertainty")
+                else:
+                    st.error("❌ **Low Confidence**: High feature uncertainty")
