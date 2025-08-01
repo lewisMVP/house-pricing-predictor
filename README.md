@@ -78,4 +78,3 @@ house-pricing-predictor/
 
 - Thanks to the open source libraries used
 - Data from public real estate sources
-```
