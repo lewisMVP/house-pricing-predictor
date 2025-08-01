@@ -245,11 +245,11 @@ def load_plotting_libs():
 # ADD: Optimize data loading
 @st.cache_resource
 def load_model():
-    return joblib.load("xgb_model.joblib")
+    return joblib.load("model/xgb_model.joblib")
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv("merged_output.csv")
+    df = pd.read_csv("data/merged_output.csv")
     
     # Quick data type optimization
     for col in df.select_dtypes(include=[np.number]):
