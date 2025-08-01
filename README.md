@@ -50,7 +50,6 @@ python main.py
 2. Enter house information when prompted
 3. View the predicted house price results
 
-```
 
 ## Contributing
 
@@ -59,10 +58,6 @@ python main.py
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
-
-## License
-
-This project is distributed under the MIT License. See the `LICENSE` file for more details.
 
 ## Contact
 
