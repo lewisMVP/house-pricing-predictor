@@ -44,12 +44,22 @@ pip install -r requirements.txt
 
 1. Run the main script:
 ```bash
-python main.py
+python app.py
 ```
 
 2. Enter house information when prompted
 3. View the predicted house price results
 
+## Project Structure
+
+```
+house-pricing-predictor/
+├── data/                   # Training data
+├── models/                 # Trained models
+├── requirements.txt        # Dependencies
+├── app.py                  # Main execution file
+└── README.md               # This file
+```
 
 ## Contributing
 
