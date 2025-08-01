@@ -50,17 +50,6 @@ python main.py
 2. Enter house information when prompted
 3. View the predicted house price results
 
-## Project Structure
-
-```
-house-pricing-predictor/
-├── data/                   # Training data
-├── models/                 # Trained models
-├── notebooks/              # Jupyter notebooks for analysis
-├── src/                    # Main source code
-├── requirements.txt        # Dependencies
-├── main.py                # Main execution file
-└── README.md              # This file
 ```
 
 ## Contributing
